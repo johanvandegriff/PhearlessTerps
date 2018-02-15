@@ -1,0 +1,196 @@
+
+
+/*
+ * constant table to hold the motor pwm and analog pin numbers
+ * the two digital outputs and one digital input are connected to a shift register board
+ * there is no setting for a motor direction, since that will be managed in the raspberry pi
+ */
+const int8_t motorPins[MAX_NUM_MOTORS][2] = {
+// port  PWM    analog
+  /*0*/{UNUSED, UNUSED},
+  /*1*/{UNUSED, UNUSED},
+  /*2*/{UNUSED, UNUSED},
+  /*3*/{     6, UNUSED},
+  /*4*/{     5,     A3},
+  /*5*/{     4,     A2},
+  /*6*/{     3,     A1},
+  /*7*/{     2,     A0}
+};
+
+/*
+ * holds the current states on the motors (not constant)
+ * since the power ranges from 0-255, another variable is needed for the direction
+ * 
+ */
+uint8_t motorStates[MAX_NUM_MOTORS][3] = {
+// port  power  current direction  brake/coast
+  /*0*/{     0,           FORWARD,      BRAKE},
+  /*1*/{     0,           FORWARD,      BRAKE},
+  /*2*/{     0,           FORWARD,      BRAKE},
+  /*3*/{     0,           FORWARD,      BRAKE},
+  /*4*/{     0,           FORWARD,      BRAKE},
+  /*5*/{     0,           FORWARD,      BRAKE},
+  /*6*/{     0,           FORWARD,      BRAKE},
+  /*7*/{     0,           FORWARD,      BRAKE}
+};
+
+/*
+ * current draw read from the analog pin for each motor, if available
+ * ranges from 0-1024 (10 bits), and 0xffff (65535) for unknown value
+ */
+uint16_t motorCurrentDraw[MAX_NUM_MOTORS] = {
+  UNKNOWN_CURRENT,
+  UNKNOWN_CURRENT,
+  UNKNOWN_CURRENT,
+  UNKNOWN_CURRENT,
+  UNKNOWN_CURRENT,
+  UNKNOWN_CURRENT,
+  UNKNOWN_CURRENT,
+  UNKNOWN_CURRENT
+};
+
+/*
+ * reading from the status flag through the shift registers
+ * a LOW output means that there is an error, but the output is inverted before being stored here
+ */
+boolean motorStatusFlag[MAX_NUM_MOTORS] = {
+  STATUS_OK,
+  STATUS_OK,
+  STATUS_OK,
+  STATUS_OK,
+  STATUS_OK,
+  STATUS_OK,
+  STATUS_OK,
+  STATUS_OK
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*
+ * holds all the motors
+ * if a motor is unused, set the PWM pin to NONE
+ */
+Motor motors[MAX_NUM_MOTORS] = {
+//|port|PWM|analog |enc1 |enc2|pwr|brake|enc|draw|isOK|
+  /*0*/{NONE, NONE, NONE, NONE, 0, true, 0, NONE, true},
+  /*1*/{NONE, NONE, NONE, NONE, 0, true, 0, NONE, true},
+  /*2*/{NONE, NONE, NONE, NONE, 0, true, 0, NONE, true},
+  /*3*/{   6, NONE, NONE, NONE, 0, true, 0, NONE, true},
+  /*4*/{   5,   A3, NONE, NONE, 0, true, 0, NONE, true},
+  /*5*/{   4,   A2, NONE, NONE, 0, true, 0, NONE, true},
+  /*6*/{   3,   A1, NONE, NONE, 0, true, 0, NONE, true},
+  /*7*/{   2,   A0, NONE, NONE, 0, true, 0, NONE, true}
+};
+
+Servo servo0, servo1, servo2, servo3, servo4, servo5, servo6, servo7;
+/*
+ * holds all the servos
+ * if a servo is unused, set the pin to NONE
+ */
+ServoControl servos[MAX_NUM_MOTORS] = {
+//|port|Servo   |pin|pos|target|moveMask|done|
+  /*0*/{servo0,    9, 0,    90,    0,    true},
+  /*1*/{servo1, NONE, 0,    90,    0,    true},
+  /*2*/{servo2, NONE, 0,    90,    0,    true},
+  /*3*/{servo3, NONE, 0,    90,    0,    true},
+  /*4*/{servo4, NONE, 0,    90,    0,    true},
+  /*5*/{servo5, NONE, 0,    90,    0,    true},
+  /*6*/{servo6, NONE, 0,    90,    0,    true},
+  /*7*/{servo7, NONE, 0,    90,    0,    true},
+};
+
+
+
+
+
+
+//with encoders and analog
+Motor(int8_t pwmPin, int8_t analogPin, int8_t encoderPin1, int8_t encoderPin2, boolean brake) {
+  pwmPin = pwmPin;
+  analogPin = analogPin;
+  hasEncoder = false;
+  encoderPin1 = InputPin(encoderPin1);
+  encoderPin2 = InputPin(encoderPin2);
+  power = 0;
+  brake = brake;
+  encoder = 0;
+  currentDraw = NONE;
+  isOK = true;
+//  return {pwmPin, analogPin, true, InputPin(encoderPin1), InputPin(encoderPin2), 0, brake, 0, NONE, true};
+}
+
+//with encoders only
+Motor(int8_t pwmPin, int8_t encoderPin1, int8_t encoderPin2, boolean brake) {
+  pwmPin = pwmPin;
+  analogPin = NONE;
+  hasEncoder = false;
+  encoderPin1 = InputPin(encoderPin1);
+  encoderPin2 = InputPin(encoderPin2);
+  power = 0;
+  brake = brake;
+  encoder = 0;
+  currentDraw = NONE;
+  isOK = true;
+//  return {pwmPin, NONE, true, InputPin(encoderPin1), InputPin(encoderPin2), 0, brake, 0, NONE, true};
+}
+
+//with analog only
+Motor(int8_t pwmPin, int8_t analogPin, boolean brake) {
+  pwmPin = pwmPin;
+  analogPin = analogPin;
+  hasEncoder = false;
+  encoderPin1 = NONE;
+  encoderPin2 = NONE;
+  power = 0;
+  brake = brake;
+  encoder = 0;
+  currentDraw = NONE;
+  isOK = true;
+//  return {pwmPin, analogPin, false, NONE, NONE, 0, brake, 0, NONE, true};
+}
+
+//with neither encoders or analog
+Motor(int8_t pwmPin, boolean brake) {
+  pwmPin = pwmPin;
+  analogPin = NONE;
+  hasEncoder = false;
+  encoderPin1 = NONE;
+  encoderPin2 = NONE;
+  power = 0;
+  brake = brake;
+  encoder = 0;
+  currentDraw = NONE;
+  isOK = true;
+//  return {pwmPin, NONE, false, NONE, NONE, 0, brake, 0, NONE, true};
+}
+
+//no motor
+Motor() {
+  pwmPin = NONE;
+  analogPin = NONE;
+  hasEncoder = false;
+  encoderPin1 = NONE;
+  encoderPin2 = NONE;
+  power = 0;
+  brake = true;
+  encoder = 0;
+  currentDraw = NONE;
+  isOK = true;
+//  return {NONE, NONE, false, NONE, NONE, 0, true, 0, NONE, true};
+}
+
