@@ -1,3 +1,5 @@
+#include <Enes100.h>
+
 #ifndef cbi
 #define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
 #endif
@@ -12,9 +14,22 @@
 #include <Servo.h>
 #include <Encoder.h>
 
+/* Create a new Enes100 object
+ * Parameters:
+ *  string teamName
+ *  int teamType
+ *  int markerId
+ *  int rxPin
+ *  int txPin
+ */
+Enes100 enes("pHearless Terps", CHEMICAL, 3, 8, 9);
+
+
+
 #define NONE -1
 
 #define MAX_NUM_MOTORS 8
+#define MAX_NUM_SERVOS 8
 
 #define SERVO_DEFAULT_MIN_MICROS 1000
 #define SERVO_DEFAULT_MAX_MICROS 2000
@@ -23,37 +38,6 @@
 #define SERVO_INC_PER_MILLI 4
 #define SERVO_TICKS_PER_RANGE 1440
 
-#define MOTOR_CONTROL_MAX_OUT 255
-
-//speed is encoder ticks of error
-//p = power per tick per 16 millis
-//at 45 tick error, power is 255
-//p = 255/45 = 5.666666667
-#define MOTOR_CONTROL_P_NUMERATOR 48
-#define MOTOR_CONTROL_P_DENOMINATOR 32
-
-//i = power added per tick of error per 16 millis
-#define MOTOR_CONTROL_I_NUMERATOR 8
-#define MOTOR_CONTROL_I_DENOMINATOR 32
-#define MOTOR_CONTROL_MAX_I (MOTOR_CONTROL_MAX_OUT * MOTOR_CONTROL_I_DENOMINATOR) / MOTOR_CONTROL_I_NUMERATOR
-//#define MOTOR_CONTROL_MAX_I 32767
-
-//d = power per tick of delta input
-#define MOTOR_CONTROL_D_NUMERATOR 0
-#define MOTOR_CONTROL_D_DENOMINATOR 32
-
-
-
-
-//shift register pins
-Output<49> shiftClock(LOW);
-Output<50> shiftLatch(LOW);
-Input<51> shiftDataIn(true);
-Output<52> shiftDataOut1(LOW);
-Output<53> shiftDataOut2(LOW);
-
-Output<39> togglePin(LOW);
-
 /*
  * Motor
  * contains the motor's pins, state, and feedback
@@ -61,42 +45,40 @@ Output<39> togglePin(LOW);
 class Motor {
   public:
     /*
+     * pin connected to IN1 on the motor controller
+     * controls the direction of the motor
+     */
+    signed in1Pin : 8;
+    /*
      * pin connected to IN2 on the motor controller
      * controls the power sent to the motor
      */
     signed pwmPin : 8;
+    /*
+     * pin connected to EN on the motor controller
+     * turns the motor on and off
+     */
+    signed enablePin : 8;
     /*
      * pin connected to FB on the motor controller
      * reads the current the motor is drawing
      */
     signed analogPin : 8;
     /*
-     * connected to the encoder pins directly on the motor
+     * pin connected to SF on the motor controller
+     * reads if the motor controller has shut off due to a high temperature or current
      */
-    unsigned hasEncoder : 8;
+    signed statusPin : 8;
     /*
      * the motor's power, including direction
      * ranges from -255 to 255 (-256 is illegal)
      */
     signed power : 16;
     /*
-     * speed in encoder ticks per second
-     * ranges from -255 to 255 (-256 is illegal)
-     */
-    signed speed : 16;
-    /*
      * true to brake when stopping
      * false to coast when stopping
      */
     unsigned brake : 8;
-    /*
-     * the value from the encoder
-     */
-    signed encoderPos : 32;
-    /*
-     * the encoder position last time the speed control loop was run
-     */
-    signed previousEncPos : 32;
     /*
      * the current being drawn by the motor
      * a negative value means there is no sensor or it has not been read yet
@@ -106,73 +88,36 @@ class Motor {
      * the status flag of the motor controller
      */
     unsigned isOK : 8;
-    /*
-     * 0 for motor cuttent control
-     * 1 for speed control
-     */
-    unsigned useSpeedControl : 8;
   
-    Motor(int8_t pwmPin1, int8_t analogPin1, boolean brake1) {
+    Motor(int8_t in1Pin1, int8_t pwmPin1, int8_t enablePin1, int8_t analogPin1, int8_t statusPin1, boolean brake1) {
+      in1Pin = in1Pin1;
       pwmPin = pwmPin1;
+      enablePin = enablePin1;
       analogPin = analogPin1;
+      statusPin = statusPin1;
       power = 0;
-      speed = 0;
       brake = brake1;
-      encoderPos = 0;
-      previousEncPos = 0;
       currentDraw = NONE;
       isOK = true;
-  
-      hasEncoder = false;
-      useSpeedControl = false;
-    }
-  
-    Motor(int8_t pwmPin1, boolean brake1) {
-      pwmPin = pwmPin1;
-      analogPin = NONE;
-      power = 0;
-      speed = 0;
-      brake = brake1;
-      encoderPos = 0;
-      previousEncPos = 0;
-      currentDraw = NONE;
-      isOK = true;
-  
-      hasEncoder = false;
-      useSpeedControl = false;
     }
   
     Motor() {
+      in1Pin = NONE;
       pwmPin = NONE;
+      enablePin = NONE;
       analogPin = NONE;
+      statusPin = NONE;
       power = 0;
-      speed = 0;
       brake = true;
-      encoderPos = 0;
-      previousEncPos = 0;
       currentDraw = NONE;
       isOK = true;
-  
-      hasEncoder = false;
-      useSpeedControl = false;
     }
   
     boolean setPower(int16_t power1) {
       if (power1 < -255 || power1 > 255) return false;
-      if (pwmPin == NONE) return false;
-      if (useSpeedControl) return false;
+      if (in1Pin == NONE || pwmPin == NONE || enablePin == NONE) return false;
     
       power = power1; //constrain(power1, -255, 255);
-      
-      return true;
-    }
-  
-    boolean setSpeed(int16_t speed1) {
-      if (speed1 < -255 || speed1 > 255) return false;
-      if (pwmPin == NONE) return false;
-      if (!useSpeedControl) return false;
-    
-      speed = speed1; //constrain(speed1, -255, 255);
       
       return true;
     }
@@ -183,115 +128,7 @@ class Motor {
         currentDraw = analogRead(analogPin);
       }
     }
-
-    boolean setUseSpeedControl(boolean useSpeedControl1) {
-      if (hasEncoder) {
-        useSpeedControl = useSpeedControl1;
-        return true;
-      } else {
-        return false;
-      }
-    }
 };
-
-
-class MotorEnc : public Motor {
-  public:
-    /*
-     * used for the speed control loop to keep track of 
-     * the change in speed
-     */
-    signed encoderDelta : 16;
-    /*
-     * used for the speed control loop to keep track of
-     * the constant speed needed
-     */
-    signed iTerm : 16;
-
-    int16_t encoderDeltaHistory[4];
-    uint8_t encoderHistoryIndex;
-    
-    Encoder* encoder;
-  
-    MotorEnc(int8_t pwmPin1, int8_t analogPin1, uint8_t encoderPin1, uint8_t encoderPin2, boolean brake1)
-      :Motor(pwmPin1, analogPin1, brake1)
-      {
-  
-      encoder = new Encoder(encoderPin1, encoderPin2);
-      hasEncoder = true;
-      encoderDelta = 0;
-      iTerm = 0;
-      for(encoderHistoryIndex = 4; encoderHistoryIndex > 0; encoderHistoryIndex--)
-        encoderDeltaHistory[encoderHistoryIndex-1] = 0;
-    
-    }
-    
-  
-    MotorEnc(int8_t pwmPin1, uint8_t encoderPin1, uint8_t encoderPin2, boolean brake1)
-      :Motor(pwmPin1, brake1)
-      {
-  
-      encoder = new Encoder(encoderPin1, encoderPin2);
-      hasEncoder = true;
-      encoderDelta = 0;
-      iTerm = 0;
-      for(encoderHistoryIndex = 4; encoderHistoryIndex > 0; encoderHistoryIndex--)
-        encoderDeltaHistory[encoderHistoryIndex-1] = 0;
-    }
-  
-    void update() {
-      Motor::update();
-      encoderPos = encoder->read();
-
-      //encoder for a neverest does 3 ticks per millisecond
-      //the max is 4 ticks per millisecond -> 64 ticks per 16 millis
-      int16_t lastEncoderDelta = encoderDelta;
-      int16_t tempDelta = (encoderPos - previousEncPos);
-      encoderDelta -= encoderDeltaHistory[encoderHistoryIndex];
-      encoderDeltaHistory[encoderHistoryIndex++] = tempDelta;
-      encoderHistoryIndex &= 3;
-      encoderDelta += tempDelta;
-      
-      if (useSpeedControl) {
-        if (speed == 0) {
-          power = 0;
-        } else {
-          // Compute all the working error variables
-          int16_t error = speed - encoderDelta;
-          
-          iTerm += error;
-          if (iTerm >  MOTOR_CONTROL_MAX_I) iTerm =  MOTOR_CONTROL_MAX_I;
-          if (iTerm < -MOTOR_CONTROL_MAX_I) iTerm = -MOTOR_CONTROL_MAX_I;
-
-          // compute dInput instead of dError to avoid spikes
-          int16_t dInput = encoderDelta - lastEncoderDelta;
-    
-          // Compute PID Output
-          power = (error * MOTOR_CONTROL_P_NUMERATOR) / MOTOR_CONTROL_P_DENOMINATOR
-            + (iTerm * MOTOR_CONTROL_I_NUMERATOR) / MOTOR_CONTROL_I_DENOMINATOR
-            - (dInput * MOTOR_CONTROL_D_NUMERATOR) / MOTOR_CONTROL_D_DENOMINATOR;
-
-          if (power >  MOTOR_CONTROL_MAX_OUT) power =  MOTOR_CONTROL_MAX_OUT;
-          if (power < -MOTOR_CONTROL_MAX_OUT) power = -MOTOR_CONTROL_MAX_OUT;
-          
-          Serial.print(speed);
-          Serial.print(",");
-          Serial.print(encoderDelta);
-          Serial.print(",");
-          Serial.print(error);
-          Serial.print(",");
-          Serial.print(power);
-          Serial.print("\n");
-          
-        
-        }
-      }
-      // Remember some variables for next time
-      previousEncPos = encoderPos;
-      
-    }
-};
-
 
 /*
  * ServoControl
@@ -511,46 +348,17 @@ class ServoControl {
     }
 };
 
-class AnalogPort {
-  public:
-    /*
-     * Which pin the servo is connected to
-     */
-    signed pin : 8;
-    /*
-     * the reading from that pin
-     * a negative value means there is no sensor or it has not been read yet
-     */
-    signed reading : 16;
-
-    AnalogPort(uint8_t pin1) {
-      pin = pin1;
-      reading = -1;
-    }
-    
-    AnalogPort(){
-      pin = NONE;
-      reading = -1;
-    }
-
-    void update() {
-      if (pin != NONE) {
-        reading = analogRead(pin);
-      }
-    }
-};
-
 
 Motor* motors[MAX_NUM_MOTORS] = {
-// PORT              PWM|ANALOG|ENCODER1|ENCODER2|BRAKE
-  /*0*/ new MotorEnc(10,  A8,         3,      40, true ),
-  /*1*/ new MotorEnc(11,  A9,         2,      41, true ),
-  /*2*/ new MotorEnc( 4, A10,        18,      42, true ),
-  /*3*/ new MotorEnc( 5, A11,        19,      43, true ),
-  /*4*/ new Motor(    6, A12,                     true ),
-  /*5*/ new Motor(    7, A13,                     true ),
-  /*6*/ new Motor(    8, A14,                     true ),
-  /*7*/ new Motor(    9, A15,                     true )
+// PORT           IN1|PWM|EN| FB | SF |BRAKE
+  /*0*/ new Motor(  2,  3, 4,NONE,NONE, true),
+  /*1*/ new Motor(  7,  5,12,NONE,NONE, true),
+  /*2*/ new Motor(),
+  /*3*/ new Motor(),
+  /*4*/ new Motor(),
+  /*5*/ new Motor(),
+  /*6*/ new Motor(),
+  /*7*/ new Motor()
 };
 
 
@@ -559,29 +367,17 @@ Motor* motors[MAX_NUM_MOTORS] = {
  * if a servo is unused, set the pin to NONE
  * the serco library only allows MIN as low as 544 and MAX as high as 2400
  */
-ServoControl* servos[MAX_NUM_MOTORS] = {
+ServoControl* servos[MAX_NUM_SERVOS] = {
 // PORT                  PIN|MIN|MAX|POS (0-1440)
-  /*0*/ new ServoControl(22, 544,2400         ),
-  /*1*/ new ServoControl(23                   ),
-  /*2*/ new ServoControl(24                   ),
-  /*3*/ new ServoControl(25                   ),
-  /*4*/ new ServoControl(26                   ),
+  /*0*/ new ServoControl( 6                   ), //neutralization syringe servo
+  /*1*/ new ServoControl(10                   ), //collection syringe servo
+  /*2*/ new ServoControl(13                   ), //arm servo
+  /*3*/ new ServoControl(11                   ), //lidar servo
+  /*4*/ new ServoControl(                     ),
   /*5*/ new ServoControl(                     ),
   /*6*/ new ServoControl(                     ),
   /*7*/ new ServoControl(                     )
 };
-
-AnalogPort* analogPorts[MAX_NUM_MOTORS] = {
-  /*0*/ new AnalogPort(A0),
-  /*1*/ new AnalogPort(A1),
-  /*2*/ new AnalogPort(A2),
-  /*3*/ new AnalogPort(A3),
-  /*4*/ new AnalogPort(A4),
-  /*5*/ new AnalogPort(A5),
-  /*6*/ new AnalogPort(A6),
-  /*7*/ new AnalogPort(A7)
-};
-
 
 //call this from the setup() function to speed up analogRead
 void EnableFastAnalogRead() {
@@ -591,48 +387,47 @@ void EnableFastAnalogRead() {
   cbi(ADCSRA,ADPS0);
 }
 
-
-//String inputString = "";         // a String to hold incoming data
-//boolean stringComplete = false;  // whether the string is complete
-
-char circularBuffer[256];
-uint8_t writeAddress = 0, readAddress = 0;
-uint8_t commandsReady = 0;
-
 void setup() {
   EnableFastAnalogRead(); //enable fast analog reading
 
   Serial.begin(9600);
-  Serial2.begin(9600); //TODO increase baud rate if possible
-
-  //initialize shift registers
-  for (uint8_t i=0; i<8; i++) {
-    shiftClock.pulse(HIGH);
-  }
-  shiftLatch = HIGH;
   
   for(uint8_t i=0; i<MAX_NUM_MOTORS; i++) {
     //initialize the motor pins
+    if(motors[i]->in1Pin != NONE) {
+      pinMode(motors[i]->in1Pin, OUTPUT);
+    }
     if(motors[i]->pwmPin != NONE) {
       pinMode(motors[i]->pwmPin, OUTPUT);
-      if(motors[i]->analogPin != NONE) {
-        pinMode(motors[i]->analogPin, INPUT);
-      }
-      //the status flag and the 2 digital outputs are on the shift register
     }
+    if(motors[i]->enablePin != NONE) {
+        pinMode(motors[i]->enablePin, INPUT);
+    }
+    if(motors[i]->analogPin != NONE) {
+        pinMode(motors[i]->analogPin, INPUT);
+    }
+    if(motors[i]->statusPin != NONE) {
+        pinMode(motors[i]->statusPin, INPUT);
+    }
+  }
+        
+  for(uint8_t i=0; i<MAX_NUM_MOTORS; i++) {
     if (servos[i]->pin != NONE) {
       servos[i]->servo.attach(servos[i]->pin);
       servos[i]->servo.writeMicroseconds(servos[i]->micros);
     }
   }
 
-  uint8_t i=0;
-  do {
-    circularBuffer[i] = '*';
-    i++;
-  } while(i != 0);
-  
-//  inputString.reserve(200);
+  // Retrieve the destination
+  while (!enes.retrieveDestination()) {
+    enes.println("Unable to retrieve location");
+  }
+
+  enes.print("My destination is at ");
+  enes.print(enes.destination.x);
+  enes.print(",");
+  enes.println(enes.destination.y);
+
 
   //set up a timer interrupt every millisecond
 //  OCR0A = 0x01; //millis() counter uses 0
@@ -651,7 +446,6 @@ void updateDevices(uint32_t loopTimer) {
   
   //update motors (including shift registers) every 16 millis
   if (loopTimer % 16 == 0) {
-    shiftLatch = LOW;
     for(uint8_t i=0; i<MAX_NUM_MOTORS; i++) {
       if(motors[i]->pwmPin != NONE) { //if it is attached
 
@@ -659,27 +453,27 @@ void updateDevices(uint32_t loopTimer) {
         int16_t power = motors[i]->power;
         
         //update pin outputs based on motor power
-        uint8_t pwmOutput;
+        uint8_t in1Out, pwmOut, enableOut;
         if(power > 0) { //FORWARD
-          //write to the shift register pins
-          shiftDataOut1 = 1; //EN on the motor controller
-          shiftDataOut2 = 0; //IN1 on the motor controller
-          //write to the pwm pin
-          pwmOutput = power;
+          enableOut = 1; //EN on the motor controller
+          in1Out = 0; //IN1 on the motor controller
+          pwmOut = power;
         } else if(power < 0) { //REVERSED
-          //write to the shift register pins
-          shiftDataOut1 = 1; //EN on the motor controller
-          shiftDataOut2 = 1; //IN1 on the motor controller
-          pwmOutput = 255 + power;
+          enableOut = 1; //EN on the motor controller
+          in1Out = 1; //IN1 on the motor controller
+          pwmOut = 255 + power;
         } else { //STOPPED
-          //write to the shift register pins
-          shiftDataOut1 = motors[i]->brake; //EN on the motor controller
-          shiftDataOut2 = 1; //IN1 on the motor controller
+          enableOut = motors[i]->brake; //EN on the motor controller
+          in1Out = 1; //IN1 on the motor controller
           pwmOutput = 255;
         }
         //write to the pwm pin
         //12 us
-        analogWrite(motors[i]->pwmPin, pwmOutput); //IN2 on the motor controller
+        analogWrite(motors[i]->pwmPin, pwmOut); //IN2 on the motor controller
+
+        //write to the digital pins
+        digitalWrite(motors[i]->in1Pin, in1Out);
+        digitalWrite(motors[i]->enablePin, enableOut);
   
         //shift register clock
         //4 us
@@ -699,9 +493,8 @@ void updateDevices(uint32_t loopTimer) {
 
   //shift the mask to the left by 1, wrapping around when it reaches the end
   servoMask = servoMask << 1;
-  
   if (servoMask == 0) servoMask = 1;
-  for(uint8_t i=0; i<MAX_NUM_MOTORS; i++) {
+  for(uint8_t i=0; i<MAX_NUM_SERVOS; i++) {
     servos[i]->update(servoMask);
     analogPorts[i]->update();
   }
@@ -753,6 +546,7 @@ int pos = 0;
 
 //Encoder myEnc(3, 40);
 void loop() {
+  
 //  motors[0]->setPower(100);
 //  Serial.print(motors[0]->encoderPos);
 //  Serial.print("   ");
@@ -789,396 +583,26 @@ void loop() {
     loopTimer += 1;
     while (millis() < loopTimer);
   }
-  
-//  if(loopTimer % 1000 == 0) {
-//    Serial.print(loopTimer);
-//    Serial.print(" ");
-//    Serial.println(micros());
-//    uint8_t i=0;
-//    do {  
-//      Serial.print(circularBuffer[i]);
-//      i++;
-//    } while(i != 0);
-//    Serial.println();
-//    Serial.println(readAddress);
-//    Serial.println(writeAddress);
-//    Serial.println(commandsReady);
-//  }
 
-
-  while(readAddress != writeAddress && commandsReady) {
-    commandsReady--;
-    
-    uint8_t address;
-    uint8_t direction;
-    uint8_t power16; //16's place
-    uint8_t power1; //1's place
-    
-    uint8_t brake;
-    uint8_t useSpeedControl;
-
-    uint16_t current;
-    int32_t encoderPos;
-    int16_t encoderDelta;
-
-    uint8_t servoPos256; //256's place
-    uint8_t servoPos16; //16's place
-    uint8_t servoPos1; //1's place
-    uint8_t speed16;
-    uint8_t speed1;
-    
-    char c = circularBuffer[readAddress++]; //readAddress++ increments after evaluating
-    switch (c) {
-      case 'M':
-        c = circularBuffer[readAddress++];
-        address = charToHex(c);
-        if (address >= MAX_NUM_MOTORS) break;
-        
-        c = circularBuffer[readAddress++];
-        direction = charToHex(c);
-        if (direction >= 2) break;
-        
-        c = circularBuffer[readAddress++];
-        power16 = charToHex(c);
-        if (power16 >= 16) break;
-                
-        c = circularBuffer[readAddress++];
-        power1 = charToHex(c);
-        if (power1 >= 16) break;
-
-        //                           dir=0,1 -> 1,-1    * 16's=0-15 * 16 + 1's=0-15
-        motors[address]->setPower( (1 - (2*direction))  *  (power16 * 16 + power1)  );
-        
-        break;
-      case 'D':
-        c = circularBuffer[readAddress++];
-        address = charToHex(c);
-        if (address >= MAX_NUM_MOTORS) break;
-        
-        c = circularBuffer[readAddress++];
-        direction = charToHex(c);
-        if (direction >= 2) break;
-        
-        c = circularBuffer[readAddress++];
-        power16 = charToHex(c);
-        if (power16 >= 16) break;
-                
-        c = circularBuffer[readAddress++];
-        power1 = charToHex(c);
-        if (power1 >= 16) break;
-
-        //                           dir=0,1 -> 1,-1    * 16's=0-15 * 16 + 1's=0-15
-        motors[address]->setSpeed( (1 - (2*direction))  *  (power16 * 16 + power1)  );
-        
-        break;
-      case 'L':
-        c = circularBuffer[readAddress++];
-        address = charToHex(c);
-        if (address >= MAX_NUM_MOTORS) break;
-        
-        c = circularBuffer[readAddress++];
-        useSpeedControl = charToHex(c);
-        if (useSpeedControl >= 2) break;
-
-        motors[address]->setUseSpeedControl(useSpeedControl);
-        break;
-      case 'B':
-        c = circularBuffer[readAddress++];
-        address = charToHex(c);
-        if (address >= MAX_NUM_MOTORS) break;
-        
-        c = circularBuffer[readAddress++];
-        brake = charToHex(c);
-        if (brake >= 2) break;
-
-        motors[address]->brake = brake;
-        break;
-      case 'C':
-        c = circularBuffer[readAddress++];
-        address = charToHex(c);
-        if (address >= MAX_NUM_MOTORS) break;
-
-/*
-1024
-0000000000
-AABBBBCCCC
-
-AA = (x >> 8) & 0b1111
-BBBB = (x >> 4) & b0b1111
-CCCC = x & 0b1111
- */
-
-        if(motors[address]->currentDraw < 0) {
-          //4095 for invalid current
-          Serial2.print('F'); //256's place
-          Serial2.print('F'); //16's place
-          Serial2.print('F'); //1's place
-        } else {
-          current = motors[address]->currentDraw;
-          Serial2.print(hexToChar((current >> 8) & 0b1111)); //256's place
-          Serial2.print(hexToChar((current >> 4) & 0b1111)); //16's place
-          Serial2.print(hexToChar(current & 0b1111)); //1's place
-        }
-      case 'E':
-        c = circularBuffer[readAddress++];
-        address = charToHex(c);
-        if (address >= MAX_NUM_MOTORS) break;
-        
-        encoderPos = motors[address]->encoderPos;
-        for (int8_t i=7; i>=0; i--) {
-          Serial2.print(hexToChar((encoderPos >> (4*i)) & 0b1111)); //16^i's place
-        }
-//        Serial2.print(hexToChar((encoderPos >> 4*7) & 0b1111)); //16^7's place
-//        Serial2.print(hexToChar((encoderPos >> 4*6) & 0b1111)); //16^6's place
-//        Serial2.print(hexToChar((encoderPos >> 4*5) & 0b1111)); //16^5's place
-//        Serial2.print(hexToChar((encoderPos >> 4*4) & 0b1111)); //16^4's place
-//        Serial2.print(hexToChar((encoderPos >> 4*3) & 0b1111)); //16^3's place
-//        Serial2.print(hexToChar((encoderPos >> 4*2) & 0b1111)); //256's place
-//        Serial2.print(hexToChar((encoderPos >> 4*1) & 0b1111)); //16's place
-//        Serial2.print(hexToChar(encoderPos & 0b1111)); //1's place
-        break;
-      case 'T':
-        c = circularBuffer[readAddress++];
-        address = charToHex(c);
-        if (address >= MAX_NUM_MOTORS) break;
-
-        if (!motors[address]->hasEncoder) break;
-        
-        encoderDelta = ((MotorEnc*) motors[address])->encoderDelta;
-        for (int8_t i=3; i>=0; i--) {
-          Serial2.print(hexToChar((encoderDelta >> (4*i)) & 0b1111)); //16^i's place
-        }
-        
-        break;
-      case 'W':
-        c = circularBuffer[readAddress++];
-        address = charToHex(c);
-        if (address >= MAX_NUM_MOTORS) break;
-
-        power1 = abs(motors[address]->power);
-        direction = (motors[address]->power < 0); // negative->1  positive or zero->0
-
-        Serial2.print(hexToChar(direction));
-        for (int8_t i=1; i>=0; i--) {
-          Serial2.print(hexToChar((power1 >> (4*i)) & 0b1111)); //16^i's place
-        }
-        
-        break;
-      case 'R':
-        c = circularBuffer[readAddress++];
-        address = charToHex(c);
-        if (address >= MAX_NUM_MOTORS) break;
-
-        motors[address]->previousEncPos -= encoderPos;
-        motors[address]->encoderPos = 0;
-        break;
-      case 'P':
-        c = circularBuffer[readAddress++];
-        address = charToHex(c);
-        if (address >= MAX_NUM_MOTORS) break;
-
-        c = circularBuffer[readAddress++];
-        servoPos256 = charToHex(c);
-        if (servoPos256 >= 16) break;
-
-        c = circularBuffer[readAddress++];
-        servoPos16 = charToHex(c);
-        if (servoPos16 >= 16) break;
-                
-        c = circularBuffer[readAddress++];
-        servoPos1 = charToHex(c);
-        if (servoPos1 >= 16) break;
-
-        servos[address]->set(servoPos256*256 + servoPos16*16 + servoPos1);
-        
-        break;
-      case 'S':
-        c = circularBuffer[readAddress++];
-        address = charToHex(c);
-        if (address >= MAX_NUM_MOTORS) break;
-
-        c = circularBuffer[readAddress++];
-        
-        servoPos256 = charToHex(c);
-        if (servoPos256 >= 16) break;
-
-        c = circularBuffer[readAddress++];
-        servoPos16 = charToHex(c);
-        if (servoPos16 >= 16) break;
-                
-        c = circularBuffer[readAddress++];
-        servoPos1 = charToHex(c);
-        if (servoPos1 >= 16) break;
-
-        
-        c = circularBuffer[readAddress++];
-        speed16 = charToHex(c);
-        if (speed16 >= 16) break;
-        
-        c = circularBuffer[readAddress++];
-        speed1 = charToHex(c);
-        if (speed1 >= 16) break;
-
-        servos[address]->set(servoPos256*256 + servoPos16*16 + servoPos1, speed16*16 + speed1);
-        break;
-      default:
-        break;
-    }
-    //if the command is just a newline or starts with an invalid char, it will be skipped
-    while (c != '\n' && c != ';') {
-      c = circularBuffer[readAddress++];
-    }
+  // Update the OSV's current location
+  if (enes.updateLocation()) {
+    enes.println("Huzzah! Location updated!");
+    enes.print("My x coordinate is ");
+    enes.println(enes.location.x);
+    enes.print("My y coordinate is ");
+    enes.println(enes.location.y);
+    enes.print("My theta is ");
+    enes.println(enes.location.theta);
+  } else {
+    enes.println("Sad trombone... I couldn't update my location");
   }
+
+  enes.navigated();
+
+  // Transmit the initial pH of the pool
+  enes.baseObjective(2.7);
+
+  // Transmit the final pH of the pool
+  enes.baseObjective(7.0);
 }
 
-/*commands:
-M - set 'M'otor Power
-  char | meaning   | limits
-     0 | M
-     1 | address     0-7
-     2 | direction   0-1
-     3 | power       0-255
-     4 | power
-   No Response
-  M30FF - motor 3 forward 255
-  M41FF - motor 4 backward 255
-  M5080 - motor 5 forward 128
-  M6105 - motor 6 backward 5
-
-D - set motor spee'D'
-  char | meaning   | limits
-     0 | D
-     1 | address     0-7
-     2 | direction   0-1
-     3 | speed       0-255
-     4 | speed
-   No Response
-  D30FF - motor 3 forward 255
-  D41FF - motor 4 backward 255
-  D5080 - motor 5 forward 128
-  D6105 - motor 6 backward 5
-
-L - enable or disable speed control 'L'oop
-  char | meaning   | limits
-     0 | L
-     1 | address         0-7
-     2 | speed control?  0-1
-   No Response
-  L20 - motor 2 speed control off (coast)
-  L31 - motor 3 speed control on (float)
-  
-B - set motor 'B'rake
-  char | meaning   | limits
-     0 | B
-     1 | address     0-7
-     2 | brake?      0-1
-   No Response
-  B20 - motor 2 brake off (coast)
-  B31 - motor 3 brake on (float)
-
-E - get 'E'ncoder value
-  char | meaning   | limits
-     0 | E
-     1 | address     0-7
-   Response:
-  char | meaning   | limits
-     0 | encoderPos -2147483648 to 2147483647
-     1 | encoderPos = -2^31 to 2^31-1
-     2 | encoderPos
-     3 | encoderPos
-     4 | encoderPos
-     5 | encoderPos
-     6 | encoderPos
-     7 | encoderPos
-
-T - get encoder ticks per 16 millis
-  char | meaning   | limits
-     0 | T
-     1 | address     0-7
-   Response:
-  char | meaning   | limits
-     0 | encoderDelta -32768 to 32767
-     1 | encoderDelta = -2^15 to 2^15-1
-     2 | encoderDelta
-     3 | encoderDelta
-
-W - get power
-  char | meaning   | limits
-     0 | T
-     1 | address     0-7
-   Response:
-  char | meaning   | limits
-     0 | direction   0-1
-     1 | power       0-255
-     2 | power
-
-R - reset encoder
-  char | meaning   | limits
-     0 | R
-     1 | address     0-7
-   No Response
-  R2 - reset motor 2's encoder
-  R3 - reset motor 3's encoder
-
-
-C - get 'C'urrent draw
-  char | meaning   | limits
-     0 | C
-     1 | address     0-7
-   Response:
-  char | meaning   | limits
-     0 | current     0-1023
-     1 | current
-     2 | current
-   
-
-     
-
-P - set servo 'P'osition
-  char | meaning   | limits
-     0 | P
-     1 | address     0-7
-     2 | position    0-1440
-     3 | position
-     4 | position
-   No Response
-   P3B4 - servo 3 to 180 (B4)
-   P400 - servo 4 to 0
-
-S - set servo position and 'S'peed
-  char | meaning   | limits
-     0 | S
-     1 | address     0-7
-     2 | position    0-1440
-     3 | position
-     4 | position
-     5 | speed       1-64
-     6 | speed
-   No Response
-*/
-
-/*
-  https://www.arduino.cc/en/Reference/SerialEvent
-  https://www.arduino.cc/en/Tutorial/SerialEvent
-  SerialEvent occurs whenever a new data comes in the hardware serial RX. This
-  routine is run between each time loop() runs, so using delay inside loop can
-  delay response. Multiple bytes of data may be available.
-*/
-void serialEvent2() {
-  while (Serial2.available()) {
-    circularBuffer[writeAddress] = Serial2.read();
-    if(circularBuffer[writeAddress] == '\n' || circularBuffer[writeAddress] == ';') commandsReady++;
-    writeAddress++;
-    
-    //get the new byte:
-//    char inChar = Serial2.read();
-//    //if the incoming character is a newline
-//    if (inChar == '\n') {
-//      //set a flag so the main loop can do something about it:
-//      stringComplete = true;
-//    } else {
-//      //otherwise, add it to the inputString:
-//      inputString += inChar;
-//    }
-  }
-}
