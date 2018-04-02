@@ -520,6 +520,18 @@ uint32_t loopTimer = 0;
 //int pos = 0;
 
 //Encoder myEnc(3, 40);
+
+enum State {
+  DRIVE1,
+  TURN1,
+  DRIVE2,
+  BROADCAST,
+  STOP
+};
+
+enum State state = DRIVE1;
+//unsigned long stateTimer = 0;
+
 void loop() {
   
 //  motors[0]->setPower(100);
@@ -570,14 +582,40 @@ void loop() {
     enes.println(enes.location.theta);
   } else {
     enes.println("Sad trombone... I couldn't update my location");
+  }  
+
+  if (state == DRIVE1) {
+    motors[0]->setPower(100);
+    motors[1]->setPower(100);
+    if (enes.location.x > 4) {
+      state = TURN1;
+    }
+  } else if (state == TURN1) {
+    motors[0]->setPower(-100);
+    motors[1]->setPower(100);
+    if (enes.location.theta > 3.14) {
+      state = DRIVE2;
+    }
+  } else if (state == DRIVE2) {
+    motors[0]->setPower(100);
+    motors[1]->setPower(100);
+    if (enes.location.y > 4) {
+      state = BROADCAST;
+    }
+  } else if (state == BROADCAST) {
+    motors[0]->setPower(0);
+    motors[1]->setPower(0);
+    
+    enes.navigated();
+    // Transmit the initial pH of the pool
+    enes.baseObjective(2.7);
+    // Transmit the final pH of the pool
+    enes.baseObjective(7.0);
+    
+    state = STOP;
+  } else if (state == STOP) {
+    motors[0]->setPower(0);
+    motors[1]->setPower(0);
   }
-
-  enes.navigated();
-
-  // Transmit the initial pH of the pool
-  enes.baseObjective(2.7);
-
-  // Transmit the final pH of the pool
-  enes.baseObjective(7.0);
 }
 

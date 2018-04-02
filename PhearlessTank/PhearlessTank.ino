@@ -475,7 +475,7 @@ void loop() {
     enes.print("My y coordinate is ");
     enes.println(enes.location.y);
     enes.print("My theta is ");
-    enes.println(enes.location.theta);
+    enes.println(enes.location.theta); //-pi to pi
   } else {
     enes.println("Sad trombone... I couldn't update my location");
   }
