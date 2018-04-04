@@ -7,12 +7,9 @@
 #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
 #endif
 
-//Faster digital IO:
-//https://github.com/mmarchetti/DirectIO
-//#include <DirectIO.h>
-//#include <FastAnalogRead.h>
 #include <Servo.h>
-//#include <Encoder.h>
+#include "Hardware.h"
+#include "Util.h"
 
 /* Create a new Enes100 object
    Parameters:
@@ -25,361 +22,8 @@
 Enes100 enes("pHearless Terps", CHEMICAL, 3, 8, 9);
 
 
-
-#define NONE -1
-
 #define MAX_NUM_MOTORS 8
 #define MAX_NUM_SERVOS 8
-
-#define SERVO_DEFAULT_MIN_MICROS 1000
-#define SERVO_DEFAULT_MAX_MICROS 2000
-#define SERVO_DEFAULT_POSITION 720
-#define SERVO_DEFAULT_MICROS 1500
-#define SERVO_INC_PER_MILLI 4
-#define SERVO_TICKS_PER_RANGE 1440
-
-int task = 0;
-//double const PI = 3.1415926535897932384626433832795;
-/*
-   Motor
-   contains the motor's pins, state, and feedback
-*/
-class Motor {
-  public:
-    /*
-       pin connected to IN1 on the motor controller
-       controls the direction of the motor
-    */
-    signed directionPin : 8;
-    /*
-       pin connected to IN2 on the motor controller
-       controls the power sent to the motor
-    */
-    signed pwmPin : 8;
-    /*
-       pin connected to EN on the motor controller
-       turns the motor on and off
-    */
-    signed enablePin : 8;
-    /*
-       pin connected to FB on the motor controller
-       reads the current the motor is drawing
-    */
-    signed analogPin : 8;
-    /*
-       pin connected to SF on the motor controller
-       reads if the motor controller has shut off due to a high temperature or current
-    */
-    signed statusPin : 8;
-    /*
-       the motor's power, including direction
-       ranges from -255 to 255 (-256 is illegal)
-    */
-    signed power : 16;
-    /*
-       true to brake when stopping
-       false to coast when stopping
-    */
-    unsigned brake : 8;
-    /*
-       the current being drawn by the motor
-       a negative value means there is no sensor or it has not been read yet
-    */
-    signed currentDraw : 16;
-    /*
-       the status flag of the motor controller
-    */
-    unsigned isOK : 8;
-
-    Motor(int8_t directionPin1, int8_t pwmPin1, int8_t enablePin1, int8_t analogPin1, int8_t statusPin1, boolean brake1) {
-      directionPin = directionPin1;
-      pwmPin = pwmPin1;
-      enablePin = enablePin1;
-      analogPin = analogPin1;
-      statusPin = statusPin1;
-      power = 0;
-      brake = brake1;
-      currentDraw = NONE;
-      isOK = true;
-    }
-
-    Motor() {
-      directionPin = NONE;
-      pwmPin = NONE;
-      enablePin = NONE;
-      analogPin = NONE;
-      statusPin = NONE;
-      power = 0;
-      brake = true;
-      currentDraw = NONE;
-      isOK = true;
-    }
-
-    boolean setPower(int16_t power1) {
-      if (power1 < -255 || power1 > 255) return false;
-      if (directionPin == NONE || pwmPin == NONE || enablePin == NONE) return false;
-
-      power = power1; //constrain(power1, -255, 255);
-
-      return true;
-    }
-
-    void update() {
-      if (pwmPin == NONE) return; //if it is not attached
-
-      //update pin outputs based on motor power
-      uint8_t directionOut, pwmOut, enableOut;
-      if (power > 0) { //FORWARD
-        enableOut = 1; //EN on the motor controller
-        directionOut = 0; //IN1 on the motor controller
-        pwmOut = power;
-      } else if (power < 0) { //REVERSED
-        enableOut = 1; //EN on the motor controller
-        directionOut = 1; //IN1 on the motor controller
-        pwmOut = 255 + power;
-      } else { //STOPPED
-        enableOut = brake; //EN on the motor controller
-        directionOut = 1; //IN1 on the motor controller
-        pwmOut = 255;
-      }
-      //write to the pwm pin
-      //12 us
-      analogWrite(pwmPin, pwmOut); //IN2 on the motor controller
-
-      //write to the digital pins
-      digitalWrite(directionPin, directionOut);
-      digitalWrite(enablePin, enableOut);
-
-      //read the status if the pin os connected
-      if (statusPin != NONE) {
-        isOK = digitalRead(statusPin);
-      }
-
-      //read the current draw if it has an analog pin
-      if (analogPin != NONE) {
-        currentDraw = analogRead(analogPin);
-      }
-    }
-};
-
-/*
-   ServoControl
-   controls the speed of a servo
-*/
-class ServoControl {
-  public:
-    Servo servo;
-    /*
-       Which pin the servo is connected to
-    */
-    signed pin : 8;
-    /*
-       The minimum microseconds to send the servo to set it to its minimum position
-       0-2048, default = 1000
-    */
-    unsigned minMicros : 16;
-    /*
-       The maximum microseconds to send the servo to set it to its maximum position
-       0-4096, default = 2000
-    */
-    unsigned maxMicros : 16;
-    /*
-       The last command sent to the servo
-    */
-    unsigned micros : 16;
-    /*
-       The current position of the servo in 1/8 degree ticks.
-       0-1440, default = 360 (180 degrees with 1/8 degree precision)
-    */
-    unsigned position : 16;
-    /*
-       The target position where the servo is headed when using the speed control
-       0-1440 (180 degrees with 1/8 degree precision)
-    */
-    unsigned target : 16;
-
-    /*
-       stores the last speed set for this servo
-       prevents the moveMask from being recreated every time
-    */
-    unsigned speed : 8;
-    /*
-       A bitmask where each bit tells whether or not to increment the servo on that millisecond
-       Every millisecond, the mask is checked, and if it is a 1 at that position, the servo increments 4 ticks (0.5 degrees)
-    */
-    uint64_t moveMask : 64;
-    /*
-       For speed control, tells whether the servo's position has reached its target
-       0 = not done, 1 = done
-    */
-    unsigned isDone : 8;
-
-    ServoControl(uint8_t pin1, uint16_t minMicros1, uint16_t maxMicros1, uint16_t position1) {
-      Servo servo1;
-      servo = servo1;
-      pin = pin1;
-      minMicros = minMicros1;
-      maxMicros = maxMicros1;
-      micros = SERVO_DEFAULT_MICROS;
-      position = position1;
-      target = position1;
-      speed = 0;
-      moveMask = 0;
-      isDone = true;
-    }
-
-    ServoControl(uint8_t pin1, uint16_t minMicros1, uint16_t maxMicros1) {
-      Servo servo1;
-      servo = servo1;
-      pin = pin1;
-      minMicros = minMicros1;
-      maxMicros = maxMicros1;
-      position = SERVO_DEFAULT_POSITION;
-      target = SERVO_DEFAULT_POSITION;
-      speed = 0;
-      moveMask = 0;
-      isDone = true;
-    }
-
-    ServoControl(uint8_t pin1, uint16_t position1) {
-      Servo servo1;
-      servo = servo1;
-      pin = pin1;
-      minMicros = SERVO_DEFAULT_MIN_MICROS;
-      maxMicros = SERVO_DEFAULT_MAX_MICROS;
-      position = position1;
-      target = SERVO_DEFAULT_POSITION;
-      speed = 0;
-      moveMask = 0;
-      isDone = true;
-    }
-
-    ServoControl(uint8_t pin1) {
-      Servo servo1;
-      servo = servo1;
-      pin = pin1;
-      minMicros = SERVO_DEFAULT_MIN_MICROS;
-      maxMicros = SERVO_DEFAULT_MAX_MICROS;
-      position = SERVO_DEFAULT_POSITION;
-      target = SERVO_DEFAULT_POSITION;
-      speed = 0;
-      moveMask = 0;
-      isDone = true;
-    }
-
-    ServoControl() {
-      Servo servo1;
-      servo = servo1;
-      pin = NONE;
-      minMicros = SERVO_DEFAULT_MIN_MICROS;
-      maxMicros = SERVO_DEFAULT_MAX_MICROS;
-      position = SERVO_DEFAULT_POSITION;
-      target = SERVO_DEFAULT_POSITION;
-      speed = 0;
-      moveMask = 0;
-      isDone = true;
-    }
-
-    /*
-       address   0-7     which servo
-       position  0-1440  1/8 of a degree
-    */
-    boolean set(uint16_t position1) {
-      //  if (address >= MAX_NUM_MOTORS) return false;
-      //the servo must be attached
-      if (pin == NONE) return false;
-
-      if (position1 > SERVO_TICKS_PER_RANGE) position1 = SERVO_TICKS_PER_RANGE;
-
-      //set the position and target position to the same thing
-      target = position1;
-      position = position1;
-
-      //the mask will not be checked anyway
-      moveMask = 0;
-
-      //the servo is at its target
-      isDone = true;
-
-      return true;
-    }
-
-    /*
-       address   0-7     which servo
-       position  0-1440  1/8 of a degree
-       speed     1-64    ticks per 128 milliseconds
-
-       a value of 0 for the speed will result in no command sent
-       a value greater than 64 will call the other setServo function (max speed)
-    */
-    boolean set(uint16_t position1, uint8_t speed1) {
-      //speed cannot be 0
-      if (speed1 == 0) return false;
-      //  if (speed == 0 || address >= MAX_NUM_MOTORS) return false;
-
-      //anything higher than 64 is faster than the servo can go
-      if (speed1 > 64) speed1 = 64;
-
-      //the servo must be attached
-      if (pin == NONE) return false;
-
-      if (position1 > SERVO_TICKS_PER_RANGE) position1 = SERVO_TICKS_PER_RANGE;
-
-      //set the target
-      target = position1;
-      isDone = (position == target);
-
-      if (speed != speed1) {
-        speed = speed1;
-
-        //set moveMask to have evenly spaced bits set
-        //the total number of bits set is equal to the speed
-        uint64_t servoMoveMask = 0;
-        uint64_t mask = 1;
-        uint8_t j = 0, oldJ = 255;
-        for (uint8_t i = 0; i < 64; i++) {
-          j = i * speed1 / 64;
-          if (j != oldJ ) {
-            servoMoveMask |= mask;
-            oldJ = j;
-          }
-          mask = mask << 1;
-        }
-        moveMask = servoMoveMask;
-      }
-      return true;
-    }
-
-
-    uint16_t calculateMicros() {
-      return constrain(map(position, 0, SERVO_TICKS_PER_RANGE, minMicros, maxMicros), minMicros, maxMicros);
-    }
-
-    void update(uint64_t servoMask) {
-      //12 us
-      //update servo
-      //note: delta time is always 1 millisecond
-      //if it is time to update the servos (see above) and the servo position is not at the target
-      //and the servo is set to move on this tick based on the moveMask
-      if ((position != target) && (moveMask & servoMask)) {
-        //move the servo 1 step toward the target
-        if (position > target) {
-          position -= min(SERVO_INC_PER_MILLI, position - target);
-        } else {
-          position += min(SERVO_INC_PER_MILLI, target - position);
-        }
-      }
-      //send the command to the Servo library
-      uint16_t micros1 = calculateMicros();
-      if (micros1 != micros) {
-        micros = micros1;
-        servo.writeMicroseconds(micros);
-      }
-      //record whether or not the servo is done for external purposes
-      isDone = (position == target);
-    }
-};
-
 
 Motor* motors[MAX_NUM_MOTORS] = {
   // PORT           IN1|PWM|EN| FB | SF |BRAKE
@@ -431,29 +75,8 @@ void setup() {
   enes.print(enes.destination.x);
   enes.print(",");
   enes.println(enes.destination.y);
-  Serial.begin(9600);
 
-
-  for (uint8_t i = 0; i < MAX_NUM_MOTORS; i++) {
-    //initialize the motor pins
-    if (motors[i]->directionPin != NONE) {
-      pinMode(motors[i]->directionPin, OUTPUT);
-    }
-    if (motors[i]->pwmPin != NONE) {
-      pinMode(motors[i]->pwmPin, OUTPUT);
-    }
-    if (motors[i]->enablePin != NONE) {
-      pinMode(motors[i]->enablePin, OUTPUT);
-    }
-    if (motors[i]->analogPin != NONE) {
-      pinMode(motors[i]->analogPin, INPUT);
-    }
-    if (motors[i]->statusPin != NONE) {
-      pinMode(motors[i]->statusPin, INPUT);
-    }
-  }
-
-  for (uint8_t i = 0; i < MAX_NUM_MOTORS; i++) {
+  for (uint8_t i = 0; i < MAX_NUM_SERVOS; i++) {
     if (servos[i]->pin != NONE) {
       servos[i]->servo.attach(servos[i]->pin);
       servos[i]->servo.writeMicroseconds(servos[i]->micros);
@@ -480,19 +103,13 @@ void setup() {
 uint64_t servoMask = 0;
 
 void updateDevices(uint32_t loopTimer) {
-  //timer interrupt function (every millisecond)
-  //SIGNAL(TIMER0_COMPA_vect) {
-  //  togglePin.toggle();
-  //  return;
-  //  uint32_t start = micros();
-
-  //update motors (including shift registers) every 16 millis
+  //every 16 millis
   if (loopTimer % 16 == 0) {
+    //update motors
     for (uint8_t i = 0; i < MAX_NUM_MOTORS; i++) {
       motors[i]->update();
     }
   }
-
 
   //shift the mask to the left by 1, wrapping around when it reaches the end
   servoMask = servoMask << 1;
@@ -500,10 +117,16 @@ void updateDevices(uint32_t loopTimer) {
   for (uint8_t i = 0; i < MAX_NUM_SERVOS; i++) {
     servos[i]->update(servoMask);
   }
-  //timer = micros() - start;
+
+  //make sure the loop runs no faster than once every 1 millisecond
+  int16_t difference = millis() - loopTimer;
+  if (difference >= 100) {
+    loopTimer += difference;
+  } else {
+    loopTimer += 1;
+    while (millis() < loopTimer);
+  }
 }
-
-
 
 /*
    returns -1 when an invalid char is passed in
@@ -529,167 +152,216 @@ char hexToChar(uint8_t h) {
 
 uint32_t loopTimer = 0;
 
-//int pos = 0;
+int task = 0;
 
-//Encoder myEnc(3, 40);
+enum State {
+  TURN,
+  STOP
+};
+
+enum State state = TURN;
+
 void loop() {
-  //A. forward locomotive test
-  if (task == 0) {
-    while (enes.location.x <= 4) {
-      motors[0]->setPower(200);
-      motors[1]->setPower(200);
-      if (enes.location.x == 4) {
-        motors[0]->setPower(0);
-        motors[1]->setPower(0);
-        delay(1000);
-        task += 1;
-      }
-      enes.updateLocation();
-    }
-  }
-
-
-  //B. Turning Test (orientation has to be replaced with theta which is radians -pi to pi)
-  if (task == 2) {
-    while (enes.location.theta <= PI / 2) {
-      motors[0]->setPower(-200);
-      motors[1]->setPower(200);
-      if (enes.location.theta == PI / 2) {
-        motors[0]->setPower(0);
-        motors[1]->setPower(0);
-        delay(1000);
-      }
-      enes.updateLocation();
-    }
-    while (enes.location.theta >= 0) {
-      motors[0]->setPower(200);
-      motors[1]->setPower(-200);
-      if (enes.location.theta == 0) {
-         motors[0]->setPower(0);
-         motors[1]->setPower(0);
-        delay(1000);
-      }
-      enes.updateLocation();
-    }
-    while (enes.location.theta >= -PI / 2) {
-      motors[0]->setPower(200);
-      motors[1]->setPower(-200);
-      if (enes.location.theta == -PI / 2) {
-        motors[0]->setPower(0);
-        motors[1]->setPower(0);
-        delay(1000);
-        task += 1;
-      }
-      enes.updateLocation();
-    }
-  }
-
-
-  //C. RF Communications
-  if (task == 3) {
-    if (enes.retrieveDestination() == true) {
-      enes.print("Receiving destination is at the time of part C. is: ");
-      enes.print(enes.destination.x);
-      enes.print(",");
-      enes.println(enes.destination.y);
-    }
-    task += 1;
-  }
-
-  //D. 
-  if (task == 4) {
-    if (enes.location.theta != 0) {
-      if (enes.location.theta < 0) {
-        while (enes.location.theta != 0) {
-          motors[0]->setPower(-200);
-          motors[1]->setPower(200);
-          enes.updateLocation();
-        }
-      }
-      else if (enes.location.theta > 0) {
-        while (enes.location.theta != 0) {
-          motors[0]->setPower(200);
-          motors[1]->setPower(-200);
-          enes.updateLocation();
-        }
-      }
-    }
-    if (enes.location.y != enes.destination.y) {
-      if (enes.location.y > enes.destination.y) {
-        while (enes.location.theta > -PI / 2) {
-          motors[0]->setPower(200);
-          motors[1]->setPower(-200);
-          enes.updateLocation();
-        }
-      }
-      else if (enes.location.y < enes.destination.y) {
-        while (enes.location.theta < PI / 2) {
-          motors[0]->setPower(-200);
-          motors[1]->setPower(200);
-          enes.updateLocation();
-        }
-      }
-      while (enes.location.y != enes.destination.y) {
-        motors[0]->setPower(200);
-        motors[1]->setPower(200);
-        if (enes.location.theta == PI / 2) {
-          while (enes.location.theta != 0) {
-            motors[0]->setPower(200);
-            motors[1]->setPower(-200);
-            enes.updateLocation();
-          }
-        }
-        else if (enes.location.theta == -PI / 2) {
-          while (enes.location.theta != 0) {
-            motors[0]->setPower(-200);
-            motors[1]->setPower(200);
-            enes.updateLocation();
-          }
-        }
-      }
-    }
-    while (enes.location.x < enes.destination.x) {
-      motors[0]->setPower(200);
-      motors[1]->setPower(200);
-    }
-    task += 1;
-  }
-
   updateDevices(loopTimer);
 
-  //  delayMicroseconds(200);
-  //  delayMicroseconds(150);
+  //every 16 millis (on a different count than the motors) update OSV location
+  if (loopTimer % 16 == 8) enes.updateLocation();
 
-  //make sure the loop runs no faster than once every 1 millisecond
-  int16_t difference = millis() - loopTimer;
-  if (difference >= 100) {
-    //    Serial.print(loopTimer);
-    //    Serial.print(" skip ");
-    //    Serial.println(difference);
-    loopTimer += difference;
-  } else {
-    loopTimer += 1;
-    while (millis() < loopTimer);
+  if (state == TURN) {
+    double targetHeading = PI / 2;
+
+    double TURN_GAIN = 0.2;
+    double TURN_DEADZONE = 0.01;
+    double TURN_MIN_SPEED = 0.05;
+    double TURN_MAX_SPEED = 1;
+    Vector2D targetHeadingVector = Vector2D(1, targetHeading);
+    Vector2D directionVector = Vector2D(1, Angle::fromRadians(enes.location.theta));
+
+    //find the "signed angular separation", the magnitude and direction of the error
+    double angleRadians = Vector2D::signedAngularSeparation(targetHeadingVector, directionVector).getRadians();
+    enes.print("signed angular separation: ");
+    enes.println(angleRadians);
+
+    //              This graph shows angle error vs. rotation correction
+    //              ____________________________
+    //              | correction.       ____   |
+    //              |           .      /       |
+    //              |           .   __/        |
+    //              | ........__.__|.......... |
+    //              |      __|  .     error    |
+    //              |     /     .              |
+    //              | ___/      .              |
+    //              |__________________________|
+    //
+    //              The following code creates this graph:
+
+    //scale the signedAngularSeparation by a constant
+    double rotationCorrection = TURN_GAIN * angleRadians;
+    //                rotationCorrection = GYRO_PID.computeCorrection(0, angleRadians);
+
+    if (abs(rotationCorrection) > TURN_MAX_SPEED) {
+      //cap the rotationCorrection at +/- TURN_MAX_SPEED
+      rotationCorrection = sgn(rotationCorrection) * TURN_MAX_SPEED;
+    } else if (abs(rotationCorrection) < TURN_DEADZONE) {
+      //set it to 0 if it is in the deadzone
+      rotationCorrection = 0;
+    } else if (abs(rotationCorrection) < TURN_MIN_SPEED) {
+      //set it to the minimum if it is below
+      rotationCorrection = sgn(rotationCorrection) * TURN_MIN_SPEED;
+    }
+
+    enes.print("rotationCorrection: ");
+    enes.println(rotationCorrection);
+
+    motors[0]->setPower(255*rotationCorrection);
+    motors[1]->setPower(-255*rotationCorrection);
+    
+  } else if (state == STOP) {
+    motors[0]->setPower(0);
+    motors[1]->setPower(0);
   }
 
-  // Update the OSV's current location
-  if (enes.updateLocation()) {
-    enes.println("Huzzah! Location updated!");
-    enes.print("My x coordinate is ");
-    enes.println(enes.location.x);
-    enes.print("My y coordinate is ");
-    enes.println(enes.location.y);
-    enes.print("My theta is ");
-    enes.println(enes.location.theta);
-  } else {
-    enes.println("Sad trombone... I couldn't update my location");
-  }
+  //  } else if (state == BROADCAST) {
+  //    enes.navigated();
+  //    // Transmit the initial pH of the pool
+  //    enes.baseObjective(2.7);
+  //    // Transmit the final pH of the pool
+  //    enes.baseObjective(7.0);
+  //  }
 
-  enes.navigated();
+  //  // Update the OSV's current location
+  //  if (enes.updateLocation()) {
+  //    enes.println("Huzzah! Location updated!");
+  //    enes.print("My x coordinate is ");
+  //    enes.println(enes.location.x);
+  //    enes.print("My y coordinate is ");
+  //    enes.println(enes.location.y);
+  //    enes.print("My theta is ");
+  //    enes.println(enes.location.theta);
+  //  } else {
+  //    enes.println("Sad trombone... I couldn't update my location");
+  //  }
 
-  // Transmit the initial pH of the pool
-  enes.baseObjective(2.7);
-
-  // Transmit the final pH of the pool
-  enes.baseObjective(7.0);
+  //
+  //  //A. forward locomotive test
+  //  if (task == 0) {
+  //    while (enes.location.x <= 4) {
+  //      motors[0]->setPower(200);
+  //      motors[1]->setPower(200);
+  //      if (enes.location.x == 4) {
+  //        motors[0]->setPower(0);
+  //        motors[1]->setPower(0);
+  //        delay(1000);
+  //        task += 1;
+  //      }
+  //      enes.updateLocation();
+  //    }
+  //  }
+  //
+  //
+  //  //B. Turning Test (orientation has to be replaced with theta which is radians -pi to pi)
+  //  if (task == 2) {
+  //    while (enes.location.theta <= PI / 2) {
+  //      motors[0]->setPower(-200);
+  //      motors[1]->setPower(200);
+  //      if (enes.location.theta == PI / 2) {
+  //        motors[0]->setPower(0);
+  //        motors[1]->setPower(0);
+  //        delay(1000);
+  //      }
+  //      enes.updateLocation();
+  //    }
+  //    while (enes.location.theta >= 0) {
+  //      motors[0]->setPower(200);
+  //      motors[1]->setPower(-200);
+  //      if (enes.location.theta == 0) {
+  //         motors[0]->setPower(0);
+  //         motors[1]->setPower(0);
+  //        delay(1000);
+  //      }
+  //      enes.updateLocation();
+  //    }
+  //    while (enes.location.theta >= -PI / 2) {
+  //      motors[0]->setPower(200);
+  //      motors[1]->setPower(-200);
+  //      if (enes.location.theta == -PI / 2) {
+  //        motors[0]->setPower(0);
+  //        motors[1]->setPower(0);
+  //        delay(1000);
+  //        task += 1;
+  //      }
+  //      enes.updateLocation();
+  //    }
+  //  }
+  //
+  //
+  //  //C. RF Communications
+  //  if (task == 3) {
+  //    if (enes.retrieveDestination() == true) {
+  //      enes.print("Receiving destination is at the time of part C. is: ");
+  //      enes.print(enes.destination.x);
+  //      enes.print(",");
+  //      enes.println(enes.destination.y);
+  //    }
+  //    task += 1;
+  //  }
+  //
+  //  //D.
+  //  if (task == 4) {
+  //    if (enes.location.theta != 0) {
+  //      if (enes.location.theta < 0) {
+  //        while (enes.location.theta != 0) {
+  //          motors[0]->setPower(-200);
+  //          motors[1]->setPower(200);
+  //          enes.updateLocation();
+  //        }
+  //      }
+  //      else if (enes.location.theta > 0) {
+  //        while (enes.location.theta != 0) {
+  //          motors[0]->setPower(200);
+  //          motors[1]->setPower(-200);
+  //          enes.updateLocation();
+  //        }
+  //      }
+  //    }
+  //    if (enes.location.y != enes.destination.y) {
+  //      if (enes.location.y > enes.destination.y) {
+  //        while (enes.location.theta > -PI / 2) {
+  //          motors[0]->setPower(200);
+  //          motors[1]->setPower(-200);
+  //          enes.updateLocation();
+  //        }
+  //      }
+  //      else if (enes.location.y < enes.destination.y) {
+  //        while (enes.location.theta < PI / 2) {
+  //          motors[0]->setPower(-200);
+  //          motors[1]->setPower(200);
+  //          enes.updateLocation();
+  //        }
+  //      }
+  //      while (enes.location.y != enes.destination.y) {
+  //        motors[0]->setPower(200);
+  //        motors[1]->setPower(200);
+  //        if (enes.location.theta == PI / 2) {
+  //          while (enes.location.theta != 0) {
+  //            motors[0]->setPower(200);
+  //            motors[1]->setPower(-200);
+  //            enes.updateLocation();
+  //          }
+  //        }
+  //        else if (enes.location.theta == -PI / 2) {
+  //          while (enes.location.theta != 0) {
+  //            motors[0]->setPower(-200);
+  //            motors[1]->setPower(200);
+  //            enes.updateLocation();
+  //          }
+  //        }
+  //      }
+  //    }
+  //    while (enes.location.x < enes.destination.x) {
+  //      motors[0]->setPower(200);
+  //      motors[1]->setPower(200);
+  //    }
+  //    task += 1;
+  //  }
 }
