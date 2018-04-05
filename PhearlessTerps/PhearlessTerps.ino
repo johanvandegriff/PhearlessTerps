@@ -66,16 +66,6 @@ void EnableFastAnalogRead() {
 void setup() {
   EnableFastAnalogRead(); //enable fast analog reading
 
-  // Retrieve the destination
-  while (!enes.retrieveDestination()) {
-    enes.println("Unable to retrieve location");
-  }
-
-  enes.print("My destination is at ");
-  enes.print(enes.destination.x);
-  enes.print(",");
-  enes.println(enes.destination.y);
-
   for (uint8_t i = 0; i < MAX_NUM_SERVOS; i++) {
     if (servos[i]->pin != NONE) {
       servos[i]->servo.attach(servos[i]->pin);
@@ -83,23 +73,17 @@ void setup() {
     }
   }
 
-  // Retrieve the destination
-  while (!enes.retrieveDestination()) {
-    enes.println("Unable to retrieve location");
-  }
-
-  enes.print("My destination is at ");
-  enes.print(enes.destination.x);
-  enes.print(",");
-  enes.println(enes.destination.y);
-
-
-  //set up a timer interrupt every millisecond
-  //  OCR0A = 0x01; //millis() counter uses 0
-  //  TIMSK0 |= _BV(OCIE0A);
+//  // Retrieve the destination
+//  while (!enes.retrieveDestination()) {
+//    enes.println("Unable to retrieve location");
+//  }
+//
+//  enes.print("My destination is at ");
+//  enes.print(enes.destination.x);
+//  enes.print(",");
+//  enes.println(enes.destination.y);
 }
 
-//uint32_t timer;
 uint64_t servoMask = 0;
 
 void updateDevices(uint32_t loopTimer) {
@@ -155,17 +139,60 @@ uint32_t loopTimer = 0;
 int task = 0;
 
 enum State {
+  START,
+  MOTOR0F, MOTOR1F, MOTOR0B, MOTOR1B,
   TURN,
   STOP
 };
 
-enum State state = TURN;
+enum State state = START;
+
+uint32_t stateTimer = 0;
+int stateLength = 1000;
 
 void loop() {
   updateDevices(loopTimer);
 
   //every 16 millis (on a different count than the motors) update OSV location
   if (loopTimer % 16 == 8) enes.updateLocation();
+  
+  if (state == START) {
+    stateTimer = millis();
+    state = MOTOR0F;
+    motors[0]->setPower(255);
+    motors[1]->setPower(0);
+  } else if (state == MOTOR0F) {
+    if (millis() > stateTimer + stateLength) {
+      state = MOTOR1F;
+      stateTimer += stateLength;
+      motors[0]->setPower(0);
+      motors[1]->setPower(255);
+    }
+  } else if (state == MOTOR1F) {
+    if (millis() > stateTimer + stateLength) {
+      state = MOTOR0B;
+      stateTimer += stateLength;
+      motors[0]->setPower(-255);
+      motors[1]->setPower(0);
+    }
+  } else if (state == MOTOR0B) {
+    if (millis() > stateTimer + stateLength) {
+      state = MOTOR1B;
+      stateTimer += stateLength;
+      motors[0]->setPower(0);
+      motors[1]->setPower(-255);
+    }
+  } else if (state == MOTOR1B) {
+    if (millis() > stateTimer + stateLength) {
+      state = STOP;
+      stateTimer += stateLength;
+    }
+  } else if (state == STOP) {
+    motors[0]->setPower(0);
+    motors[1]->setPower(0);
+  }
+
+  return;
 
   if (state == TURN) {
     double targetHeading = PI / 2;
@@ -213,9 +240,9 @@ void loop() {
     enes.print("rotationCorrection: ");
     enes.println(rotationCorrection);
 
-    motors[0]->setPower(255*rotationCorrection);
-    motors[1]->setPower(-255*rotationCorrection);
-    
+    motors[0]->setPower(255 * rotationCorrection);
+    motors[1]->setPower(-255 * rotationCorrection);
+
   } else if (state == STOP) {
     motors[0]->setPower(0);
     motors[1]->setPower(0);
