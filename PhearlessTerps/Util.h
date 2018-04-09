@@ -236,9 +236,7 @@ class Vector3D {
        @param vector2D the 2D vector to use
        @return the created Vector3D
     */
-    static Vector3D from2D(Vector2D vector2D) {
-      return Vector3D(vector2D.getX(), vector2D.getY(), 0);
-    }
+    static Vector3D from2D(Vector2D vector2D);
 
 
     /**
@@ -318,6 +316,10 @@ class Vector3D {
     double getZ() {
       return z;
     }
+
+    void setX(double x1) {x=x1;}
+    void setY(double y1) {y=y1;}
+    void setZ(double z1) {z=z1;}
 
     /**
        @return the length or magnitude of the vector

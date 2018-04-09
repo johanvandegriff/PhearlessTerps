@@ -21,6 +21,11 @@
 */
 Enes100 enes("pHearless Terps", CHEMICAL, 3, 8, 9);
 
+double dabs(double val) {
+  if (val > 0) return val;
+  if (val < 0) return -val;
+  return 0;
+}
 
 #define MAX_NUM_MOTORS 8
 #define MAX_NUM_SERVOS 8
@@ -82,6 +87,64 @@ void setup() {
 //  enes.print(enes.destination.x);
 //  enes.print(",");
 //  enes.println(enes.destination.y);
+
+//  Serial.begin(9600);
+//  
+//  double targetHeading = PI / 2.0;
+//
+//  double TURN_GAIN = 0.2;
+//  double TURN_DEADZONE = 0.01;
+//  double TURN_MIN_SPEED = 0.05;
+//  double TURN_MAX_SPEED = 1;
+//  Vector2D targetHeadingVector = Vector2D(1, Angle::fromRadians(targetHeading));
+//  Vector2D directionVector = Vector2D(1, Angle::fromRadians(enes.location.theta));
+//
+//  //find the "signed angular separation", the magnitude and direction of the error
+//  double angleRadians = Vector2D::signedAngularSeparation(targetHeadingVector, directionVector).getRadians();
+//  Serial.print("signed angular separation: ");
+//  Serial.println(angleRadians);
+//
+//  //              This graph shows angle error vs. rotation correction
+//  //              ____________________________
+//  //              | correction.       ____   |
+//  //              |           .      /       |
+//  //              |           .   __/        |
+//  //              | ........__.__|.......... |
+//  //              |      __|  .     error    |
+//  //              |     /     .              |
+//  //              | ___/      .              |
+//  //              |__________________________|
+//  //
+//  //              The following code creates this graph:
+//
+//
+//  Serial.print("angleRadians: ");
+//  Serial.println(angleRadians);
+//
+//  //scale the signedAngularSeparation by a constant
+//  double rotationCorrection = TURN_GAIN * angleRadians;
+//  //                rotationCorrection = GYRO_PID.computeCorrection(0, angleRadians);
+//
+//  Serial.print("rotationCorrection before: ");
+//  Serial.println(rotationCorrection);
+//  Serial.println(TURN_DEADZONE);
+//  
+//  if (dabs(rotationCorrection) > TURN_MAX_SPEED) {
+//    //cap the rotationCorrection at +/- TURN_MAX_SPEED
+//    rotationCorrection = sgn(rotationCorrection) * TURN_MAX_SPEED;
+//  } else if (dabs(rotationCorrection) < TURN_DEADZONE) {
+//    //set it to 0 if it is in the deadzone
+//    rotationCorrection = 0;
+//  } else if (dabs(rotationCorrection) < TURN_MIN_SPEED) {
+//    //set it to the minimum if it is below
+//    rotationCorrection = sgn(rotationCorrection) * TURN_MIN_SPEED;
+//  }
+//
+//  Serial.print("rotationCorrection after: ");
+//  Serial.println(rotationCorrection);
+//
+//  motors[0]->setPower(255 * rotationCorrection);
+//  motors[1]->setPower(-255 * rotationCorrection);
 }
 
 uint64_t servoMask = 0;
@@ -139,8 +202,8 @@ uint32_t loopTimer = 0;
 int task = 0;
 
 enum State {
-  START,
-  MOTOR0F, MOTOR1F, MOTOR0B, MOTOR1B,
+//  START,
+//  MOTOR0F, MOTOR1F, MOTOR0B, MOTOR1B,
   TURN,
   STOP
 };
@@ -155,47 +218,9 @@ void loop() {
 
   //every 16 millis (on a different count than the motors) update OSV location
   if (loopTimer % 16 == 8) enes.updateLocation();
-  
-  if (state == START) {
-    stateTimer = millis();
-    state = MOTOR0F;
-    motors[0]->setPower(255);
-    motors[1]->setPower(0);
-  } else if (state == MOTOR0F) {
-    if (millis() > stateTimer + stateLength) {
-      state = MOTOR1F;
-      stateTimer += stateLength;
-      motors[0]->setPower(0);
-      motors[1]->setPower(255);
-    }
-  } else if (state == MOTOR1F) {
-    if (millis() > stateTimer + stateLength) {
-      state = MOTOR0B;
-      stateTimer += stateLength;
-      motors[0]->setPower(-255);
-      motors[1]->setPower(0);
-    }
-  } else if (state == MOTOR0B) {
-    if (millis() > stateTimer + stateLength) {
-      state = MOTOR1B;
-      stateTimer += stateLength;
-      motors[0]->setPower(0);
-      motors[1]->setPower(-255);
-    }
-  } else if (state == MOTOR1B) {
-    if (millis() > stateTimer + stateLength) {
-      state = STOP;
-      stateTimer += stateLength;
-    }
-  } else if (state == STOP) {
-    motors[0]->setPower(0);
-    motors[1]->setPower(0);
-  }
-
-  return;
 
   if (state == TURN) {
-    double targetHeading = PI / 2;
+    double targetHeading = PI / 2.0;
 
     double TURN_GAIN = 0.2;
     double TURN_DEADZONE = 0.01;
@@ -226,13 +251,13 @@ void loop() {
     double rotationCorrection = TURN_GAIN * angleRadians;
     //                rotationCorrection = GYRO_PID.computeCorrection(0, angleRadians);
 
-    if (abs(rotationCorrection) > TURN_MAX_SPEED) {
+    if (dabs(rotationCorrection) > TURN_MAX_SPEED) {
       //cap the rotationCorrection at +/- TURN_MAX_SPEED
       rotationCorrection = sgn(rotationCorrection) * TURN_MAX_SPEED;
-    } else if (abs(rotationCorrection) < TURN_DEADZONE) {
+    } else if (dabs(rotationCorrection) < TURN_DEADZONE) {
       //set it to 0 if it is in the deadzone
       rotationCorrection = 0;
-    } else if (abs(rotationCorrection) < TURN_MIN_SPEED) {
+    } else if (dabs(rotationCorrection) < TURN_MIN_SPEED) {
       //set it to the minimum if it is below
       rotationCorrection = sgn(rotationCorrection) * TURN_MIN_SPEED;
     }
@@ -247,6 +272,43 @@ void loop() {
     motors[0]->setPower(0);
     motors[1]->setPower(0);
   }
+//  if (state == START) {
+//    stateTimer = millis();
+//    state = MOTOR0F;
+//    motors[0]->setPower(255);
+//    motors[1]->setPower(0);
+//  } else if (state == MOTOR0F) {
+//    if (millis() > stateTimer + stateLength) {
+//      state = MOTOR1F;
+//      stateTimer += stateLength;
+//      motors[0]->setPower(0);
+//      motors[1]->setPower(255);
+//    }
+//  } else if (state == MOTOR1F) {
+//    if (millis() > stateTimer + stateLength) {
+//      state = MOTOR0B;
+//      stateTimer += stateLength;
+//      motors[0]->setPower(-255);
+//      motors[1]->setPower(0);
+//    }
+//  } else if (state == MOTOR0B) {
+//    if (millis() > stateTimer + stateLength) {
+//      state = MOTOR1B;
+//      stateTimer += stateLength;
+//      motors[0]->setPower(0);
+//      motors[1]->setPower(-255);
+//    }
+//  } else if (state == MOTOR1B) {
+//    if (millis() > stateTimer + stateLength) {
+//      state = STOP;
+//      stateTimer += stateLength;
+//    }
+//  } else if (state == STOP) {
+//    motors[0]->setPower(0);
+//    motors[1]->setPower(0);
+//  }
+//
+//  return;
 
   //  } else if (state == BROADCAST) {
   //    enes.navigated();
