@@ -10,6 +10,13 @@
 #include <Servo.h>
 #include "Hardware.h"
 #include "Util.h"
+#define SensorPin 0          //pH meter Analog output to Arduino Analog Input 0
+unsigned long int avgValue;  //Store the average value of the sensor feedback
+float b;
+int buf[10],temp;
+#include "Adafruit_VL53L0X.h"
+
+Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 
 /* Create a new Enes100 object
    Parameters:
@@ -19,7 +26,7 @@
     int rxPin
     int txPin
 */
-Enes100 enes("pHearless Terps", CHEMICAL, 3, 8, 9);
+Enes100 enes("pHearless Terps", CHEMICAL, 7, 8, 9);
 
 double dabs(double val) {
   if (val > 0) return val;
@@ -33,7 +40,7 @@ double dabs(double val) {
 Motor* motors[MAX_NUM_MOTORS] = {
   // PORT           IN1|PWM|EN| FB | SF |BRAKE
   /*0*/ new Motor(  2,  3, 4, NONE, NONE, true), //left motor
-  /*1*/ new Motor(  7,  5, 12, NONE, NONE, true), //right motor
+  /*1*/ new Motor(  5,  7, 12, NONE, NONE, true), //right motor
   /*2*/ new Motor(),
   /*3*/ new Motor(),
   /*4*/ new Motor(),
@@ -69,6 +76,7 @@ void EnableFastAnalogRead() {
 }
 
 void setup() {
+  
   EnableFastAnalogRead(); //enable fast analog reading
 
   for (uint8_t i = 0; i < MAX_NUM_SERVOS; i++) {
@@ -78,15 +86,18 @@ void setup() {
     }
   }
 
-//  // Retrieve the destination
-//  while (!enes.retrieveDestination()) {
-//    enes.println("Unable to retrieve location");
-//  }
-//
-//  enes.print("My destination is at ");
-//  enes.print(enes.destination.x);
-//  enes.print(",");
-//  enes.println(enes.destination.y);
+  lox.begin();
+
+
+  while (!enes.retrieveDestination()) 
+  {
+    enes.println("Unable to retrieve location");
+  }
+
+  enes.print("My destination is at ");
+  enes.print(enes.destination.x);
+  enes.print(",");
+  enes.println(enes.destination.y);
 
 //  Serial.begin(9600);
 //  
@@ -202,31 +213,28 @@ uint32_t loopTimer = 0;
 int task = 0;
 
 enum State {
-//  START,
-//  MOTOR0F, MOTOR1F, MOTOR0B, MOTOR1B,
-  TURN,
-  STOP
+  FWD,
+  TURN1,
+  TURN2,
+  TURN3,
+  STOP,
+  NAVTURN,
+  NAVFWD,
+  BROADCAST
 };
 
-enum State state = START;
+enum State state = FWD;
 
 uint32_t stateTimer = 0;
 int stateLength = 1000;
 
-void loop() {
-  updateDevices(loopTimer);
-
-  //every 16 millis (on a different count than the motors) update OSV location
-  if (loopTimer % 16 == 8) enes.updateLocation();
-
-  if (state == TURN) {
-    double targetHeading = PI / 2.0;
-
+boolean turn(double targetHeading) {
+  boolean done = false;
     double TURN_GAIN = 0.2;
     double TURN_DEADZONE = 0.01;
     double TURN_MIN_SPEED = 0.05;
     double TURN_MAX_SPEED = 1;
-    Vector2D targetHeadingVector = Vector2D(1, targetHeading);
+    Vector2D targetHeadingVector = Vector2D(1, Angle::fromRadians(targetHeading));
     Vector2D directionVector = Vector2D(1, Angle::fromRadians(enes.location.theta));
 
     //find the "signed angular separation", the magnitude and direction of the error
@@ -257,6 +265,7 @@ void loop() {
     } else if (dabs(rotationCorrection) < TURN_DEADZONE) {
       //set it to 0 if it is in the deadzone
       rotationCorrection = 0;
+      done = true;
     } else if (dabs(rotationCorrection) < TURN_MIN_SPEED) {
       //set it to the minimum if it is below
       rotationCorrection = sgn(rotationCorrection) * TURN_MIN_SPEED;
@@ -268,189 +277,185 @@ void loop() {
     motors[0]->setPower(255 * rotationCorrection);
     motors[1]->setPower(-255 * rotationCorrection);
 
-  } else if (state == STOP) {
+    return done;
+}
+
+void loop() {
+
+ updateDevices(loopTimer);
+   VL53L0X_RangingMeasurementData_t measure;
+  
+  lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
+
+  if (measure.RangeStatus != 4) {  // phase failures have incorrect data
+   if (measure.RangeMilliMeter < 300){
+    double value=measure.RangeMilliMeter;
+      enes.print(" Object Detected Distance (mm): "); enes.println(value);
+   }
+  }
+
+  //every 16 millis (on a different count than the motors) update OSV location
+  if (loopTimer % 16 == 8) 
+  enes.updateLocation();
+
+  if (state == FWD)
+  {
+    
+      stateTimer = millis();
+      motors[0]->setPower(200);
+      motors[1]->setPower(200);
+      
+      if(enes.location.x <= 4) 
+      {
+        enes.println(enes.location.x);
+      }
+      else
+      {
+        motors[0]->setPower(0);
+        motors[1]->setPower(0);
+        state=STOP;
+      }
+    
+  }else if (state == TURN1)
+  {
+    if(turn(PI / 2.0)) 
+    {
+      state = TURN2;
+    }
+
+  }else if (state == TURN2)
+  {
+    if(turn(-PI / 2.0)) 
+    {
+      state = TURN3;
+    }
+
+  }else if (state == TURN3)
+  {
+    if(turn(PI / 2.0)) 
+    {
+      motors[0]->setPower(0);
+      motors[1]->setPower(0);
+      state=STOP;
+    }
+
+  }
+  else if(state==NAVTURN)
+  {
+    enes.println(enes.location.x);
+    double x=enes.destination.x-enes.location.x;
+    double y = enes.destination.y-enes.location.y;
+    double desiredTheta= atan(y/x);
+    if(turn(desiredTheta)) 
+    {
+      motors[0]->setPower(0);
+      motors[1]->setPower(0);
+      state=NAVFWD;
+    }
+    
+  }else if(state==NAVFWD)
+  {
+  
+      stateTimer = millis();
+      motors[0]->setPower(200);
+      motors[1]->setPower(200);
+    double x=enes.destination.x-enes.location.x;
+    double y = enes.destination.y-enes.location.y;
+    double desiredTheta= atan(y/x);
+    double thetaError=dabs(desiredTheta-enes.location.theta);
+    double distance= sqrt(x*x+ y*y);
+    if(thetaError>= PI/8)
+    {
+      state=NAVTURN;
+    }else if(distance >=.250) 
+      {
+        
+        enes.print("enes.location (x, y, theta): (");
+        enes.print(enes.location.x);
+        enes.print(", ");
+        enes.print(enes.location.y);
+        enes.print(", ");
+        enes.print(enes.location.theta);
+        enes.println(")");
+        
+        enes.print("enes.destination (x, y, theta): (");
+        enes.print(enes.destination.x);
+        enes.print(", ");
+        enes.print(enes.destination.y);
+        enes.print(", ");
+        enes.print(enes.destination.theta);
+        enes.println(")");
+
+        enes.print("x, y: ");
+        enes.print(x);
+        enes.print(", ");
+        enes.println(y);
+
+        
+        enes.print("desiredTheta");
+        enes.println(desiredTheta);
+        enes.print("thetaError");
+        enes.println(thetaError);
+        enes.print("distance");
+        enes.println(distance);
+        
+       
+      }
+      else
+      {
+        motors[0]->setPower(0);
+        motors[1]->setPower(0);
+        state=STOP;
+      }
+}
+
+
+if (state == STOP)
+{
     motors[0]->setPower(0);
     motors[1]->setPower(0);
+}
+
+//E
+if (state == BROADCAST) 
+{
+   for(int i=0;i<10;i++)       //Get 10 sample value from the sensor for smooth the value
+  { 
+    buf[i]=analogRead(SensorPin);
+    delay(10);
   }
-//  if (state == START) {
-//    stateTimer = millis();
-//    state = MOTOR0F;
-//    motors[0]->setPower(255);
-//    motors[1]->setPower(0);
-//  } else if (state == MOTOR0F) {
-//    if (millis() > stateTimer + stateLength) {
-//      state = MOTOR1F;
-//      stateTimer += stateLength;
-//      motors[0]->setPower(0);
-//      motors[1]->setPower(255);
-//    }
-//  } else if (state == MOTOR1F) {
-//    if (millis() > stateTimer + stateLength) {
-//      state = MOTOR0B;
-//      stateTimer += stateLength;
-//      motors[0]->setPower(-255);
-//      motors[1]->setPower(0);
-//    }
-//  } else if (state == MOTOR0B) {
-//    if (millis() > stateTimer + stateLength) {
-//      state = MOTOR1B;
-//      stateTimer += stateLength;
-//      motors[0]->setPower(0);
-//      motors[1]->setPower(-255);
-//    }
-//  } else if (state == MOTOR1B) {
-//    if (millis() > stateTimer + stateLength) {
-//      state = STOP;
-//      stateTimer += stateLength;
-//    }
-//  } else if (state == STOP) {
-//    motors[0]->setPower(0);
-//    motors[1]->setPower(0);
-//  }
-//
-//  return;
+  for(int i=0;i<9;i++)        //sort the analog from small to large
+  {
+    for(int j=i+1;j<10;j++)
+    {
+      if(buf[i]>buf[j])
+      {
+        temp=buf[i];
+        buf[i]=buf[j];
+        buf[j]=temp;
+      }
+    }
+  }
+  avgValue=0;
+  for(int i=2;i<8;i++)                      //take the average value of 6 center sample
+    avgValue+=buf[i];
+  float phValue=(float)avgValue*5.0/1024/6; //convert the analog into millivolt
+  phValue=3.5*phValue;                      //convert the millivolt into pH value
+    enes.print("    pH:");  
+    enes.print(phValue);
+    enes.println(" ");
+      enes.navigated();
+      // Transmit the initial pH of the pool
+      enes.baseObjective(phValue);
+      // Transmit the final pH of the pool
+      enes.baseObjective(7.0);
+      state=STOP;
 
-  //  } else if (state == BROADCAST) {
-  //    enes.navigated();
-  //    // Transmit the initial pH of the pool
-  //    enes.baseObjective(2.7);
-  //    // Transmit the final pH of the pool
-  //    enes.baseObjective(7.0);
-  //  }
 
-  //  // Update the OSV's current location
-  //  if (enes.updateLocation()) {
-  //    enes.println("Huzzah! Location updated!");
-  //    enes.print("My x coordinate is ");
-  //    enes.println(enes.location.x);
-  //    enes.print("My y coordinate is ");
-  //    enes.println(enes.location.y);
-  //    enes.print("My theta is ");
-  //    enes.println(enes.location.theta);
-  //  } else {
-  //    enes.println("Sad trombone... I couldn't update my location");
-  //  }
+      
+  }
 
-  //
-  //  //A. forward locomotive test
-  //  if (task == 0) {
-  //    while (enes.location.x <= 4) {
-  //      motors[0]->setPower(200);
-  //      motors[1]->setPower(200);
-  //      if (enes.location.x == 4) {
-  //        motors[0]->setPower(0);
-  //        motors[1]->setPower(0);
-  //        delay(1000);
-  //        task += 1;
-  //      }
-  //      enes.updateLocation();
-  //    }
-  //  }
-  //
-  //
-  //  //B. Turning Test (orientation has to be replaced with theta which is radians -pi to pi)
-  //  if (task == 2) {
-  //    while (enes.location.theta <= PI / 2) {
-  //      motors[0]->setPower(-200);
-  //      motors[1]->setPower(200);
-  //      if (enes.location.theta == PI / 2) {
-  //        motors[0]->setPower(0);
-  //        motors[1]->setPower(0);
-  //        delay(1000);
-  //      }
-  //      enes.updateLocation();
-  //    }
-  //    while (enes.location.theta >= 0) {
-  //      motors[0]->setPower(200);
-  //      motors[1]->setPower(-200);
-  //      if (enes.location.theta == 0) {
-  //         motors[0]->setPower(0);
-  //         motors[1]->setPower(0);
-  //        delay(1000);
-  //      }
-  //      enes.updateLocation();
-  //    }
-  //    while (enes.location.theta >= -PI / 2) {
-  //      motors[0]->setPower(200);
-  //      motors[1]->setPower(-200);
-  //      if (enes.location.theta == -PI / 2) {
-  //        motors[0]->setPower(0);
-  //        motors[1]->setPower(0);
-  //        delay(1000);
-  //        task += 1;
-  //      }
-  //      enes.updateLocation();
-  //    }
-  //  }
-  //
-  //
-  //  //C. RF Communications
-  //  if (task == 3) {
-  //    if (enes.retrieveDestination() == true) {
-  //      enes.print("Receiving destination is at the time of part C. is: ");
-  //      enes.print(enes.destination.x);
-  //      enes.print(",");
-  //      enes.println(enes.destination.y);
-  //    }
-  //    task += 1;
-  //  }
-  //
-  //  //D.
-  //  if (task == 4) {
-  //    if (enes.location.theta != 0) {
-  //      if (enes.location.theta < 0) {
-  //        while (enes.location.theta != 0) {
-  //          motors[0]->setPower(-200);
-  //          motors[1]->setPower(200);
-  //          enes.updateLocation();
-  //        }
-  //      }
-  //      else if (enes.location.theta > 0) {
-  //        while (enes.location.theta != 0) {
-  //          motors[0]->setPower(200);
-  //          motors[1]->setPower(-200);
-  //          enes.updateLocation();
-  //        }
-  //      }
-  //    }
-  //    if (enes.location.y != enes.destination.y) {
-  //      if (enes.location.y > enes.destination.y) {
-  //        while (enes.location.theta > -PI / 2) {
-  //          motors[0]->setPower(200);
-  //          motors[1]->setPower(-200);
-  //          enes.updateLocation();
-  //        }
-  //      }
-  //      else if (enes.location.y < enes.destination.y) {
-  //        while (enes.location.theta < PI / 2) {
-  //          motors[0]->setPower(-200);
-  //          motors[1]->setPower(200);
-  //          enes.updateLocation();
-  //        }
-  //      }
-  //      while (enes.location.y != enes.destination.y) {
-  //        motors[0]->setPower(200);
-  //        motors[1]->setPower(200);
-  //        if (enes.location.theta == PI / 2) {
-  //          while (enes.location.theta != 0) {
-  //            motors[0]->setPower(200);
-  //            motors[1]->setPower(-200);
-  //            enes.updateLocation();
-  //          }
-  //        }
-  //        else if (enes.location.theta == -PI / 2) {
-  //          while (enes.location.theta != 0) {
-  //            motors[0]->setPower(-200);
-  //            motors[1]->setPower(200);
-  //            enes.updateLocation();
-  //          }
-  //        }
-  //      }
-  //    }
-  //    while (enes.location.x < enes.destination.x) {
-  //      motors[0]->setPower(200);
-  //      motors[1]->setPower(200);
-  //    }
-  //    task += 1;
-  //  }
+
+
+  
 }
