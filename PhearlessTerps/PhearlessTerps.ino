@@ -60,7 +60,7 @@ ServoControl* servos[MAX_NUM_SERVOS] = {
   /*0*/ new ServoControl( 6                   ), //neutralization syringe servo
   /*1*/ new ServoControl(10                   ), //collection syringe servo
   /*2*/ new ServoControl(13                   ), //arm servo
-  /*3*/ new ServoControl(11                   ), //lidar servo
+  /*3*/ new ServoControl(11                   ) //lidar servo
 };
 
 //call this from the setup() function to speed up analogRead
@@ -290,6 +290,18 @@ void loop() {
     enes.print(enes.destination.theta);
     enes.println(")");
 
+    //              This graph shows angle error vs. rotation correction
+    //              ____________________________
+    //              | correction.       ____   |
+    //              |           .      /       |
+    //              |           .   __/        |
+    //              | ........__.__|.......... |
+    //              |      __|  .     error    |
+    //              |     /     .              |
+    //              | ___/      .              |
+    //              |__________________________|
+    //
+    //              The following code creates this graph:
 
     double desiredTheta = 0;
     if (turn(desiredTheta))
