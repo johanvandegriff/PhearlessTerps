@@ -10,7 +10,7 @@
 #include <Servo.h>
 #include "Hardware.h"
 //#include "Util.h"
-#define SensorPin 0          //pH meter Analog output to Arduino Analog Input 0
+#define PH_SENSOR_PIN A0          //pH meter Analog output to Arduino Analog Input 0
 unsigned long int avgValue;  //Store the average value of the sensor feedback
 float b;
 int buf[10], temp;
@@ -159,20 +159,60 @@ char hexToChar(uint8_t h) {
 
 uint32_t loopTimer = 0;
 
-const uint8_t FOURFWD = 0;
-const uint8_t FOURTURN = 1;
-const uint8_t TURN1 = 2;
-const uint8_t TURN2 = 3;
-const uint8_t TURN3 = 4;
-const uint8_t STOP = 5;
-const uint8_t NAVTURN = 6;
-const uint8_t NAVFWD = 7;
-const uint8_t BROADCAST = 8;
+const uint8_t DRIVE_OVER_ROCKS = 0;
+const uint8_t TURN_DOWNSTREAM = 1;
+const uint8_t DRIVE_DOWNSTREAM = 2;
+const uint8_t TURN_LEFT = 3;
+const uint8_t TURN_RIGHT = 4;
+const uint8_t DRIVE_TO_AVOID = 5;
+const uint8_t TURN_TO_GOAL = 6;
+const uint8_t DRIVE_TO_GOAL = 7;
 
-uint8_t state = FOURFWD;
+//const uint8_t FOURFWD = 0;
+//const uint8_t FOURTURN = 1;
+//const uint8_t TURN1 = 2;
+//const uint8_t TURN2 = 3;
+//const uint8_t TURN3 = 4;
+//const uint8_t STOP = 5;
+//const uint8_t NAVTURN = 6;
+//const uint8_t NAVFWD = 7;
+//const uint8_t BROADCAST = 8;
+
+uint8_t state = DRIVE_OVER_ROCKS;
 
 uint32_t stateTimer = 0;
 int stateLength = 1000;
+
+#define LIDAR_NONE 0
+#define LIDAR_LEFT 1
+#define LIDAR_RIGHT 2
+
+#define LIDAR_THRESHOLD 300
+
+uint8_t lidarScan() {
+  VL53L0X_RangingMeasurementData_t measure;
+
+  lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
+
+  double value = 1000;
+  if (measure.RangeStatus != 4) {  // phase failures have incorrect data
+    value = measure.RangeMilliMeter;
+//    if (measure.RangeMilliMeter < 300) {
+//      double value = measure.RangeMilliMeter;
+//      enes.print("Object! (mm): "); enes.println(value);
+//    }
+  }
+
+  uint32_t timer = millis() % 1024;
+  if (timer > 512) {
+    servos[3]->set(200);
+    if (timer > 512+200 && value < LIDAR_THRESHOLD) return LIDAR_LEFT;
+  } else {
+    servos[3]->set(1200);
+    if (timer > 200 && value < LIDAR_THRESHOLD) return LIDAR_RIGHT;
+  }
+  return LIDAR_NONE;
+}
 
 const double TURN_GAIN = 0.8;
 const double TURN_DEADZONE = 0.15;
@@ -251,133 +291,79 @@ boolean turn(double targetHeading) {
   return done;
 }
 
+double startX, startY;
+
 void loop() {
 
   updateDevices(loopTimer);
-  VL53L0X_RangingMeasurementData_t measure;
 
-  lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
-
-  if (measure.RangeStatus != 4) {  // phase failures have incorrect data
-    if (measure.RangeMilliMeter < 300) {
-      double value = measure.RangeMilliMeter;
-      enes.print("Object! (mm): "); enes.println(value);
-    }
-  }
+  uint8_t lidarDetection = lidarScan();
 
   //every 16 millis (on a different count than the motors) update OSV location
   //if (loopTimer % 16 == 8)
   enes.updateLocation();
   enes.print("state: ");
   enes.println(state);
-  if (state == FOURTURN)
-  {
 
-
-    enes.print("osv (x, y, theta): (");
-    enes.print(enes.location.x);
-    enes.print(", ");
-    enes.print(enes.location.y);
-    enes.print(", ");
-    enes.print(enes.location.theta);
-    enes.println(")");
-
-    enes.print("dest (x, y, theta): (");
-    enes.print(enes.destination.x);
-    enes.print(", ");
-    enes.print(enes.destination.y);
-    enes.print(", ");
-    enes.print(enes.destination.theta);
-    enes.println(")");
-
-    //              This graph shows angle error vs. rotation correction
-    //              ____________________________
-    //              | correction.       ____   |
-    //              |           .      /       |
-    //              |           .   __/        |
-    //              | ........__.__|.......... |
-    //              |      __|  .     error    |
-    //              |     /     .              |
-    //              | ___/      .              |
-    //              |__________________________|
-    //
-    //              The following code creates this graph:
-
-    double desiredTheta = 0;
-    if (turn(desiredTheta))
-    {
+  if (state == DRIVE_OVER_ROCKS) {
+    motors[0]->setPower(200);
+    motors[1]->setPower(200);
+    if (enes.location.x >= ROCKS_X_POS) {
+      state = TURN_DOWNSTREAM;
+    }
+  } else if (state == TURN_DOWNSTREAM) {
+    if (turn(0)) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
       state = FOURFWD;
     }
-
-  } else if (state == FOURFWD)
-  {
-    stateTimer = millis();
+  } else if (state == DRIVE_DOWNSTREAM) {
+    
     motors[0]->setPower(200);
     motors[1]->setPower(200);
     double thetaError = dabs(enes.location.theta);
-    if (thetaError >= PI / 16)
-    {
-      state = FOURTURN;
-    } else if (enes.location.x <= 2)
-    {
-
-      enes.print("osv (x, y, theta): (");
-      enes.print(enes.location.x);
-      enes.print(", ");
-      enes.print(enes.location.y);
-      enes.print(", ");
-      enes.print(enes.location.theta);
-      enes.println(")");
-
-      enes.print("dest (x, y, theta): (");
-      enes.print(enes.destination.x);
-      enes.print(", ");
-      enes.print(enes.destination.y);
-      enes.print(", ");
-      enes.print(enes.destination.theta);
-      enes.println(")");
-
-
-      enes.print("thetaError: ");
-      enes.println(thetaError);
-
-
-    }
-    else
-    {
+    if (lidarDetection == LIDAR_LEFT) {
+      state = TURN_RIGHT;
+    } else if (lidarDetection == LIDAR_RIGHT){
+      state = TURN_LEFT;
+    } else if (thetaError >= PI / 16) {
+      state = TURN_DOWNSTREAM;
+    } else if (enes.location.x >= GOAL_X_POS) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
-      state = NAVTURN;
+      state = TURN_TO_GOAL;
     }
-  } else if (state == TURN1)
-  {
-    if (turn(PI / 2.0))
-    {
-      state = TURN2;
-    }
-
-  } else if (state == TURN2)
-  {
-    if (turn(PI))
-    {
-      state = TURN3;
-    }
-
-  } else if (state == TURN3)
-  {
-    if (turn(-PI / 2.0))
-    {
+  } else if (state == TURN_LEFT) {
+    if (turn(-PI/4.0)) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
-      state = STOP;
+      startX = enes.location.x;
+      startY = enes.location.y;
+      state = DRIVE_TO_AVOID;
     }
-
-  }
-  else if (state == NAVTURN)
-  {
-    enes.println(enes.location.x);
+  } else if (state == TURN_RIGHT) {
+    if (turn(PI/4.0)) {
+      motors[0]->setPower(0);
+      motors[1]->setPower(0);
+      startX = enes.location.x;
+      startY = enes.location.y;
+      state = DRIVE_TO_AVOID;
+    }
+  } else if (state == DRIVE_TO_AVOID) {
+    motors[0]->setPower(200);
+    motors[1]->setPower(200);
+    double dX = startX - enes.location.x;
+    double dY = startY - enes.location.y;
+    double dist = sqrt(dX*dX+dY*dY)
+    
+    if (lidarDetection == LIDAR_LEFT) {
+      state = TURN_RIGHT;
+    } else if (lidarDetection == LIDAR_RIGHT){
+      state = TURN_LEFT;
+    } else if (dist > DRIVE_TO_AVOID_DIST) {
+      state = TURN_DOWNSTREAM;
+    }
+  } else if (state == TURN_TO_GOAL) {
     double x = enes.destination.x - enes.location.x;
     double y = enes.destination.y - enes.location.y;
     double desiredTheta = atan(y / x);
@@ -387,11 +373,8 @@ void loop() {
       motors[1]->setPower(0);
       state = STOP;
     }
-
-  } else if (state == NAVFWD)
-  {
-
-    stateTimer = millis();
+  } else if (state == DRIVE_TO_GOAL) {
+    
     motors[0]->setPower(200);
     motors[1]->setPower(200);
     double x = enes.destination.x - enes.location.x;
@@ -402,57 +385,15 @@ void loop() {
     if (thetaError >= PI / 16)
     {
       state = NAVTURN;
-    } else if (distance >= .250)
-    {
-
-      enes.print("osv (x, y, theta): (");
-      enes.print(enes.location.x);
-      enes.print(", ");
-      enes.print(enes.location.y);
-      enes.print(", ");
-      enes.print(enes.location.theta);
-      enes.println(")");
-
-      enes.print("dest (x, y, theta): (");
-      enes.print(enes.destination.x);
-      enes.print(", ");
-      enes.print(enes.destination.y);
-      enes.print(", ");
-      enes.print(enes.destination.theta);
-      enes.println(")");
-
-      enes.print("x, y: ");
-      enes.print(x);
-      enes.print(", ");
-      enes.println(y);
-
-
-      enes.print("desiredTheta: ");
-      enes.println(desiredTheta);
-      enes.print("thetaError: ");
-      enes.println(thetaError);
-      enes.print("distance: ");
-      enes.println(distance);
-
-
-    }
-    else
-    {
+    } else if (distance <= .250) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
       state = STOP;
     }
-  }
-
-
-  if (state == STOP)
-  {
+  } else if (state == STOP) {
     motors[0]->setPower(0);
     motors[1]->setPower(0);
   }
-
-
-
 
 
 }
