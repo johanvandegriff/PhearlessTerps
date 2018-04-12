@@ -160,6 +160,10 @@ char hexToChar(uint8_t h) {
 
 uint32_t loopTimer = 0;
 
+double ROCKS_X_POS = 1.5;
+double GOAL_X_POS = 3;
+double DRIVE_TO_AVOID_DIST = .25;
+
 const uint8_t DRIVE_OVER_ROCKS = 0;
 const uint8_t TURN_DOWNSTREAM = 1;
 const uint8_t DRIVE_DOWNSTREAM = 2;
@@ -173,6 +177,8 @@ const uint8_t NAVIGATED = 100;
 const uint8_t ARMDOWN = 101;
 const uint8_t INIPHSENT = 102;
 const uint8_t BASECOLLECTED = 103;
+
+const uint8_t STOP = 255;
 
 uint8_t state = DRIVE_OVER_ROCKS;
 
@@ -311,7 +317,7 @@ void loop() {
     if (turn(0)) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
-      state = FOURFWD;
+      state = DRIVE_DOWNSTREAM;
     }
   } else if (state == DRIVE_DOWNSTREAM) {
     
@@ -350,7 +356,7 @@ void loop() {
     motors[1]->setPower(200);
     double dX = startX - enes.location.x;
     double dY = startY - enes.location.y;
-    double dist = sqrt(dX*dX+dY*dY)
+    double dist = sqrt(dX*dX+dY*dY);
     
     if (lidarDetection == LIDAR_LEFT) {
       state = TURN_RIGHT;
@@ -380,7 +386,7 @@ void loop() {
     double distance = sqrt(x * x + y * y);
     if (thetaError >= PI / 16)
     {
-      state = NAVTURN;
+      state = TURN_TO_GOAL;
     } else if (distance <= .250) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
@@ -393,7 +399,7 @@ void loop() {
   } else if (state == ARMDOWN) {
     for (int i = 0; i < 10; i++) //Get 10 sample value from the sensor for smooth the value
     {
-      buf[i] = analogRead(SensorPin);
+      buf[i] = analogRead(PH_SENSOR_PIN);
       delay(10);
     }
     for (int i = 0; i < 9; i++) //sort the analog from small to large
