@@ -14,6 +14,7 @@
 unsigned long int avgValue;  //Store the average value of the sensor feedback
 float b;
 int buf[10], temp;
+float phValue = 0; 
 #include "Adafruit_VL53L0X.h"
 
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
@@ -168,15 +169,10 @@ const uint8_t DRIVE_TO_AVOID = 5;
 const uint8_t TURN_TO_GOAL = 6;
 const uint8_t DRIVE_TO_GOAL = 7;
 
-//const uint8_t FOURFWD = 0;
-//const uint8_t FOURTURN = 1;
-//const uint8_t TURN1 = 2;
-//const uint8_t TURN2 = 3;
-//const uint8_t TURN3 = 4;
-//const uint8_t STOP = 5;
-//const uint8_t NAVTURN = 6;
-//const uint8_t NAVFWD = 7;
-//const uint8_t BROADCAST = 8;
+const uint8_t NAVIGATED = 100;
+const uint8_t ARMDOWN = 101;
+const uint8_t INIPHSENT = 102;
+const uint8_t BASECOLLECTED = 103;
 
 uint8_t state = DRIVE_OVER_ROCKS;
 
@@ -388,12 +384,57 @@ void loop() {
     } else if (distance <= .250) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
-      state = STOP;
+      state = NAVIGATED;
     }
-  } else if (state == STOP) {
+  } else if (state == NAVIGATED) {
+    servos[2]->set(720); //should lower green arm 90 degrees
+    delay(1000);
+    state = ARMDOWN;
+  } else if (state == ARMDOWN) {
+    for (int i = 0; i < 10; i++) //Get 10 sample value from the sensor for smooth the value
+    {
+      buf[i] = analogRead(SensorPin);
+      delay(10);
+    }
+    for (int i = 0; i < 9; i++) //sort the analog from small to large
+    {
+      for (int j = i + 1; j < 10; j++)
+      {
+        if (buf[i] > buf[j])
+        {
+          temp = buf[i];
+          buf[i] = buf[j];
+          buf[j] = temp;
+        }
+      }
+    }
+    avgValue = 0;
+    for (int i = 2; i < 8; i++)               //take the average value of 6 center sample
+      avgValue += buf[i];
+    phValue = (float)avgValue * 5.0 / 1024 / 6; //convert the analog into millivolt
+    phValue = 3.6 * phValue + 2.4;                //convert the millivolt into pH value
+    enes.baseObjective(phValue); //transmit the inital pH of the pool
+    /*
+    Serial.print("    pH:");
+    Serial.print(phValue, 2);
+    Serial.println(" ");
+    digitalWrite(13, HIGH);
+    delay(800);
+    digitalWrite(13, LOW);
+    */
+    state = INIPHSENT;
+  } else if (state == INIPHSENT){
+    servos[1]->set(720); //should raise the retaining servo arm 90 degrees to allow syring to move
+    delay(1000);
+    state = BASECOLLECTED;
+  } else if (state == BASECOLLECTED){
+    if (phValue >= 6.5){
+       enes.baseObjective(phValue);
+    }
+  }
+  else if (state == STOP)
+  {
     motors[0]->setPower(0);
     motors[1]->setPower(0);
   }
-
-
 }
