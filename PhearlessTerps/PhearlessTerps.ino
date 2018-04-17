@@ -1,4 +1,8 @@
 #include <Enes100.h>
+#include <Servo.h>
+#include "Hardware.h"
+#include <Stepper.h>
+
 
 #ifndef cbi
 #define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
@@ -7,17 +11,24 @@
 #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
 #endif
 
-#include <Servo.h>
-#include "Hardware.h"
+#define TIME_LIMIT  1000L * 60 * 5 //5 minutes
+#define TIME_BUFFER 5000 //5 seconds
+
+#define STEPS 200
+#define STEPPER_SPEED 60
+
 //#include "Util.h"
 #define PH_SENSOR_PIN A0          //pH meter Analog output to Arduino Analog Input 0
 unsigned long int avgValue;  //Store the average value of the sensor feedback
 float b;
 int buf[10], temp;
-float phValue = 0; 
+float phValue = 0;
+uint32_t navigatedTime = 0;
 #include "Adafruit_VL53L0X.h"
 
 Adafruit_VL53L0X lox = Adafruit_VL53L0X();
+
+Stepper stepper(STEPS, 4,5,6,7);
 
 /* Create a new Enes100 object
    Parameters:
@@ -83,6 +94,7 @@ void setup() {
     }
   }
 
+  stepper.setSpeed(STEPPER_SPEED);
   lox.begin();
 
   while (!enes.updateLocation())
@@ -160,30 +172,32 @@ char hexToChar(uint8_t h) {
 
 uint32_t loopTimer = 0;
 
-double ROCKS_X_POS = 1.5;
-double GOAL_X_POS = 3;
-double DRIVE_TO_AVOID_DIST = .25;
+#define ROCKS_X_POS 1.5
+#define GOAL_X_POS 3
+#define DRIVE_TO_AVOID_DIST .25
 
-const uint8_t DRIVE_OVER_ROCKS = 0;
-const uint8_t TURN_DOWNSTREAM = 1;
-const uint8_t DRIVE_DOWNSTREAM = 2;
-const uint8_t TURN_LEFT = 3;
-const uint8_t TURN_RIGHT = 4;
-const uint8_t DRIVE_TO_AVOID = 5;
-const uint8_t TURN_TO_GOAL = 6;
-const uint8_t DRIVE_TO_GOAL = 7;
+#define DRIVE_OVER_ROCKS 0
+#define TURN_DOWNSTREAM 1
+#define DRIVE_DOWNSTREAM 2
+#define TURN_LEFT 3
+#define TURN_RIGHT 4
+#define DRIVE_TO_AVOID 5
+#define TURN_TO_GOAL 6
+#define DRIVE_TO_GOAL 7
 
-const uint8_t NAVIGATED = 100;
-const uint8_t ARMDOWN = 101;
-const uint8_t INIPHSENT = 102;
-const uint8_t BASECOLLECTED = 103;
+#define ARMDOWN 100
+#define MEASUREPH 101
+#define BASE_COLLECTION 102
+#define CHECK_PH 103
+#define MIX_FORWARD 104
+#define MIX_BACKWARD 105
 
-const uint8_t STOP = 255;
+#define STOP 255
 
 uint8_t state = DRIVE_OVER_ROCKS;
 
 uint32_t stateTimer = 0;
-int stateLength = 1000;
+uint8_t stateCounter = 0;
 
 #define LIDAR_NONE 0
 #define LIDAR_LEFT 1
@@ -199,16 +213,16 @@ uint8_t lidarScan() {
   double value = 1000;
   if (measure.RangeStatus != 4) {  // phase failures have incorrect data
     value = measure.RangeMilliMeter;
-//    if (measure.RangeMilliMeter < 300) {
-//      double value = measure.RangeMilliMeter;
-//      enes.print("Object! (mm): "); enes.println(value);
-//    }
+    //    if (measure.RangeMilliMeter < 300) {
+    //      double value = measure.RangeMilliMeter;
+    //      enes.print("Object! (mm): "); enes.println(value);
+    //    }
   }
 
   uint32_t timer = millis() % 1024;
   if (timer > 512) {
     servos[3]->set(200);
-    if (timer > 512+200 && value < LIDAR_THRESHOLD) return LIDAR_LEFT;
+    if (timer > 512 + 200 && value < LIDAR_THRESHOLD) return LIDAR_LEFT;
   } else {
     servos[3]->set(1200);
     if (timer > 200 && value < LIDAR_THRESHOLD) return LIDAR_RIGHT;
@@ -216,11 +230,40 @@ uint8_t lidarScan() {
   return LIDAR_NONE;
 }
 
-const double TURN_GAIN = 0.8;
-const double TURN_DEADZONE = 0.15;
-const double TURN_MIN_SPEED = 0.7;
-const double TURN_MAX_SPEED = 1;
-const double closeToZero = 1.0e-3;
+uint8_t phIndex = 0;
+boolean getPH () {
+  if (millis() >= stateTimer + 10) {
+    buf[phIndex] = analogRead(PH_SENSOR_PIN);
+    phIndex++;
+    stateTimer = millis();
+    if (phIndex >= 10) {
+      for (int i = 0; i < 9; i++) //sort the analog from small to large
+      {
+        for (int j = i + 1; j < 10; j++)
+        {
+          if (buf[i] > buf[j])
+          {
+            temp = buf[i];
+            buf[i] = buf[j];
+            buf[j] = temp;
+          }
+        }
+      }
+      avgValue = 0;
+      for (int i = 2; i < 8; i++)               //take the average value of 6 center sample
+        avgValue += buf[i];
+      phValue = (float)avgValue * 5.0 / 1024 / 6; //convert the analog into millivolt
+      phValue = 3.6 * phValue + 2.4;                //convert the millivolt into pH value
+      return true;
+    }
+  }
+  return false;
+}
+#define TURN_GAIN 0.8
+#define TURN_DEADZONE 0.15
+#define TURN_MIN_SPEED 0.7
+#define TURN_MAX_SPEED 1
+#define closeToZero 1.0e-3
 
 boolean turn(double targetHeading) {
   boolean done = false;
@@ -320,13 +363,13 @@ void loop() {
       state = DRIVE_DOWNSTREAM;
     }
   } else if (state == DRIVE_DOWNSTREAM) {
-    
+
     motors[0]->setPower(200);
     motors[1]->setPower(200);
     double thetaError = dabs(enes.location.theta);
     if (lidarDetection == LIDAR_LEFT) {
       state = TURN_RIGHT;
-    } else if (lidarDetection == LIDAR_RIGHT){
+    } else if (lidarDetection == LIDAR_RIGHT) {
       state = TURN_LEFT;
     } else if (thetaError >= PI / 16) {
       state = TURN_DOWNSTREAM;
@@ -336,7 +379,7 @@ void loop() {
       state = TURN_TO_GOAL;
     }
   } else if (state == TURN_LEFT) {
-    if (turn(-PI/4.0)) {
+    if (turn(-PI / 4.0)) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
       startX = enes.location.x;
@@ -344,7 +387,7 @@ void loop() {
       state = DRIVE_TO_AVOID;
     }
   } else if (state == TURN_RIGHT) {
-    if (turn(PI/4.0)) {
+    if (turn(PI / 4.0)) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
       startX = enes.location.x;
@@ -356,11 +399,11 @@ void loop() {
     motors[1]->setPower(200);
     double dX = startX - enes.location.x;
     double dY = startY - enes.location.y;
-    double dist = sqrt(dX*dX+dY*dY);
-    
+    double dist = sqrt(dX * dX + dY * dY);
+
     if (lidarDetection == LIDAR_LEFT) {
       state = TURN_RIGHT;
-    } else if (lidarDetection == LIDAR_RIGHT){
+    } else if (lidarDetection == LIDAR_RIGHT) {
       state = TURN_LEFT;
     } else if (dist > DRIVE_TO_AVOID_DIST) {
       state = TURN_DOWNSTREAM;
@@ -376,7 +419,7 @@ void loop() {
       state = STOP;
     }
   } else if (state == DRIVE_TO_GOAL) {
-    
+
     motors[0]->setPower(200);
     motors[1]->setPower(200);
     double x = enes.destination.x - enes.location.x;
@@ -390,57 +433,71 @@ void loop() {
     } else if (distance <= .250) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
-      state = NAVIGATED;
+      stateTimer = millis();
+      state = ARMDOWN;
+      navigatedTime = millis();
+      enes.navigated();
+      servos[2]->set(720); //should lower green arm 90 degrees
     }
-  } else if (state == NAVIGATED) {
-    servos[2]->set(720); //should lower green arm 90 degrees
-    delay(1000);
-    state = ARMDOWN;
   } else if (state == ARMDOWN) {
-    for (int i = 0; i < 10; i++) //Get 10 sample value from the sensor for smooth the value
-    {
-      buf[i] = analogRead(PH_SENSOR_PIN);
-      delay(10);
+    if (millis() > stateTimer + 1000) {
+      //delay(1000);
+      state = MEASUREPH;
+      stateTimer = millis();
+      phIndex = 0;
     }
-    for (int i = 0; i < 9; i++) //sort the analog from small to large
-    {
-      for (int j = i + 1; j < 10; j++)
-      {
-        if (buf[i] > buf[j])
-        {
-          temp = buf[i];
-          buf[i] = buf[j];
-          buf[j] = temp;
-        }
+  } else if (state == MEASUREPH) {
+    if (getPH()) {
+      enes.baseObjective(phValue); //transmit the inital pH of the pool
+      servos[1]->set(720); //should raise the retaining servo arm 90 degrees to allow syring to move
+      stateTimer = millis();
+      state = BASE_COLLECTION;
+    }
+  } else if (state == BASE_COLLECTION) {
+    if (millis() > stateTimer + 1000) {
+      state = CHECK_PH;
+    }
+  } else if (state == CHECK_PH) {
+       if (phValue >= 6.5) {
+        enes.baseObjective(phValue);
+        state = STOP;
       }
+      else {
+        stepper.step(STEPS);
+        stateTimer = millis();
+        motors[0]->setPower(200);
+        motors[1]->setPower(200);
+        stateCounter = 0;
+        state = MIX_FORWARD;
+      }
+  }
+  else if (state == MIX_FORWARD){
+    if (millis() > stateTimer + 250) {
+       motors[0]->setPower(-200);
+       motors[1]->setPower(-200);
+       state = MIX_BACKWARD;
     }
-    avgValue = 0;
-    for (int i = 2; i < 8; i++)               //take the average value of 6 center sample
-      avgValue += buf[i];
-    phValue = (float)avgValue * 5.0 / 1024 / 6; //convert the analog into millivolt
-    phValue = 3.6 * phValue + 2.4;                //convert the millivolt into pH value
-    enes.baseObjective(phValue); //transmit the inital pH of the pool
-    /*
-    Serial.print("    pH:");
-    Serial.print(phValue, 2);
-    Serial.println(" ");
-    digitalWrite(13, HIGH);
-    delay(800);
-    digitalWrite(13, LOW);
-    */
-    state = INIPHSENT;
-  } else if (state == INIPHSENT){
-    servos[1]->set(720); //should raise the retaining servo arm 90 degrees to allow syring to move
-    delay(1000);
-    state = BASECOLLECTED;
-  } else if (state == BASECOLLECTED){
-    if (phValue >= 6.5){
-       enes.baseObjective(phValue);
+  }
+  else if (state == MIX_BACKWARD){
+    if (millis() > stateTimer + 250) {
+       motors[0]->setPower(200);
+       motors[1]->setPower(200);
+       stateCounter++;
+       if (stateCounter >= 4){
+        state = CHECK_PH; 
+       }
+       else {
+        state = MIX_FORWARD;
+       }
     }
   }
   else if (state == STOP)
   {
     motors[0]->setPower(0);
     motors[1]->setPower(0);
+  }
+  if (state != STOP && millis() >= navigatedTime + TIME_LIMIT - TIME_BUFFER) {
+     enes.baseObjective(phValue);
+     state = STOP;
   }
 }
