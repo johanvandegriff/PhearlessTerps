@@ -53,27 +53,32 @@ static inline double sgn(double val) {
 }
 
 #define MAX_NUM_MOTORS 2
-#define MAX_NUM_SERVOS 4
+//#define MAX_NUM_SERVOS 4
 
 Motor* motors[MAX_NUM_MOTORS] = {
   // PORT           IN1|PWM|EN| FB | SF |BRAKE
-  /*0*/ new Motor(  5,  7, 12, NONE, NONE, true), //left motor
-  /*1*/ new Motor(  2,  3, 4, NONE, NONE, true), //right motor
+//  /*0*/ new Motor(  5,  7, 12, NONE, NONE, true), //left motor
+//  /*1*/ new Motor(  2,  3, 4, NONE, NONE, true) //right motor
+  /*0*/ new Motor(  3,  2, 4, NONE, NONE, true), //right motor
+  /*1*/ new Motor(  7,  5, 12, NONE, NONE, true) //left motor
 };
 
+///*
+//   holds all the servos
+//   if a servo is unused, set the pin to NONE
+//   the serco library only allows MIN as low as 544 and MAX as high as 2400
+//*/
+//ServoControl* servos[MAX_NUM_SERVOS] = {
+//  // PORT                 PIN| MIN| MAX|POS (0-1440)
+//  /*0*/ new ServoControl( 6                   ), //neutralization syringe servo
+//  /*1*/ new ServoControl(10                   ), //collection syringe servo
+//  /*2*/ new ServoControl(13                   ), //arm servo
+//  /*3*/ new ServoControl(11                   ) //lidar servo
+//};
 
-/*
-   holds all the servos
-   if a servo is unused, set the pin to NONE
-   the serco library only allows MIN as low as 544 and MAX as high as 2400
-*/
-ServoControl* servos[MAX_NUM_SERVOS] = {
-  // PORT                 PIN| MIN| MAX|POS (0-1440)
-  /*0*/ new ServoControl( 6                   ), //neutralization syringe servo
-  /*1*/ new ServoControl(10                   ), //collection syringe servo
-  /*2*/ new ServoControl(13                   ), //arm servo
-  /*3*/ new ServoControl(11                   ) //lidar servo
-};
+Servo armServo;
+Servo lidarServo;
+Servo collectServo;
 
 //call this from the setup() function to speed up analogRead
 void EnableFastAnalogRead() {
@@ -87,12 +92,18 @@ void setup() {
 
   EnableFastAnalogRead(); //enable fast analog reading
 
-  for (uint8_t i = 0; i < MAX_NUM_SERVOS; i++) {
-    if (servos[i]->pin != NONE) {
-      servos[i]->servo.attach(servos[i]->pin);
-      servos[i]->servo.writeMicroseconds(servos[i]->micros);
-    }
-  }
+  Serial.begin(9600);
+
+//  for (uint8_t i = 0; i < MAX_NUM_SERVOS; i++) {
+//    if (servos[i]->pin != NONE) {
+//      servos[i]->servo.attach(servos[i]->pin);
+//      servos[i]->servo.writeMicroseconds(servos[i]->micros);
+//    }
+//  }
+
+  armServo.attach(13);
+  lidarServo.attach(11);
+  collectServo.attach(10);
 
   stepper.setSpeed(STEPPER_SPEED);
   lox.begin();
@@ -120,7 +131,7 @@ void setup() {
   enes.println(enes.destination.y);
 }
 
-uint64_t servoMask = 0;
+//uint64_t servoMask = 0;
 
 void updateDevices(uint32_t loopTimer) {
   //every 16 millis
@@ -131,12 +142,12 @@ void updateDevices(uint32_t loopTimer) {
     }
   }
 
-  //shift the mask to the left by 1, wrapping around when it reaches the end
-  servoMask = servoMask << 1;
-  if (servoMask == 0) servoMask = 1;
-  for (uint8_t i = 0; i < MAX_NUM_SERVOS; i++) {
-    servos[i]->update(servoMask);
-  }
+//  //shift the mask to the left by 1, wrapping around when it reaches the end
+//  servoMask = servoMask << 1;
+//  if (servoMask == 0) servoMask = 1;
+//  for (uint8_t i = 0; i < MAX_NUM_SERVOS; i++) {
+//    servos[i]->update(servoMask);
+//  }
 
   //make sure the loop runs no faster than once every 1 millisecond
   int16_t difference = millis() - loopTimer;
@@ -221,10 +232,12 @@ uint8_t lidarScan() {
 
   uint32_t timer = millis() % 1024;
   if (timer > 512) {
-    servos[3]->set(200);
+    lidarServo.write(45);
+//    servos[3]->set(200);
     if (timer > 512 + 200 && value < LIDAR_THRESHOLD) return LIDAR_LEFT;
   } else {
-    servos[3]->set(1200);
+    lidarServo.write(135);
+//    servos[3]->set(1200);
     if (timer > 200 && value < LIDAR_THRESHOLD) return LIDAR_RIGHT;
   }
   return LIDAR_NONE;
@@ -343,9 +356,10 @@ void loop() {
   updateDevices(loopTimer);
 
   uint8_t lidarDetection = lidarScan();
+  Serial.println(lidarDetection);
 
   //every 16 millis (on a different count than the motors) update OSV location
-  //if (loopTimer % 16 == 8)
+//  if (loopTimer % 16 == 8)
   enes.updateLocation();
   enes.print("state: ");
   enes.println(state);
@@ -437,7 +451,8 @@ void loop() {
       state = ARMDOWN;
       navigatedTime = millis();
       enes.navigated();
-      servos[2]->set(720); //should lower green arm 90 degrees
+//      servos[2]->set(720); //should lower green arm 90 degrees
+      armServo.write(90);
     }
   } else if (state == ARMDOWN) {
     if (millis() > stateTimer + 1000) {
@@ -449,7 +464,8 @@ void loop() {
   } else if (state == MEASUREPH) {
     if (getPH()) {
       enes.baseObjective(phValue); //transmit the inital pH of the pool
-      servos[1]->set(720); //should raise the retaining servo arm 90 degrees to allow syring to move
+//      servos[1]->set(720); //should raise the retaining servo arm 90 degrees to allow syring to move
+      collectServo.write(90);
       stateTimer = millis();
       state = BASE_COLLECTION;
     }
