@@ -53,28 +53,16 @@ static inline double sgn(double val) {
 }
 
 #define MAX_NUM_MOTORS 2
-//#define MAX_NUM_SERVOS 4
 
 Motor* motors[MAX_NUM_MOTORS] = {
   // PORT           IN1|PWM|EN| FB | SF |BRAKE
-//  /*0*/ new Motor(  5,  7, 12, NONE, NONE, true), //left motor
-//  /*1*/ new Motor(  2,  3, 4, NONE, NONE, true) //right motor
   /*0*/ new Motor(  3,  2, 4, NONE, NONE, true), //right motor
   /*1*/ new Motor(  7,  5, 12, NONE, NONE, true) //left motor
 };
 
-///*
-//   holds all the servos
-//   if a servo is unused, set the pin to NONE
-//   the serco library only allows MIN as low as 544 and MAX as high as 2400
-//*/
-//ServoControl* servos[MAX_NUM_SERVOS] = {
-//  // PORT                 PIN| MIN| MAX|POS (0-1440)
-//  /*0*/ new ServoControl( 6                   ), //neutralization syringe servo
-//  /*1*/ new ServoControl(10                   ), //collection syringe servo
-//  /*2*/ new ServoControl(13                   ), //arm servo
-//  /*3*/ new ServoControl(11                   ) //lidar servo
-//};
+#define ARM_SERVO_PIN 13
+#define LIDAR_SERVO_PIN 11
+#define COLLECT_SERVO_PIN 10
 
 Servo armServo;
 Servo lidarServo;
@@ -87,14 +75,16 @@ void EnableFastAnalogRead() {
   cbi(ADCSRA, ADPS1);
   cbi(ADCSRA, ADPS0);
 }
-void myUpdateLocation() {
-    enes.updateLocation();
+
+boolean myUpdateLocation() {
+    if (!enes.updateLocation()) return false;
     double x2 =   enes.location.x * cos(enes.location.theta) + enes.location.y * sin(enes.location.theta);
     double y2 = - enes.location.x * sin(enes.location.theta) + enes.location.y * cos(enes.location.theta);
     x2 += 40;
     y2 += 10;
     enes.location.x =   x2 * cos(-enes.location.theta) + y2 * sin(-enes.location.theta);
-    enes.location.y = - x2 * cos(-enes.location.theta) + y2 * cos(-enes.location.theta);
+    enes.location.y = - x2 * sin(-enes.location.theta) + y2 * cos(-enes.location.theta);
+    return true;
 }
 
 void setup() {
@@ -103,16 +93,9 @@ void setup() {
 
  // Serial.begin(9600);
 
-//  for (uint8_t i = 0; i < MAX_NUM_SERVOS; i++) {
-//    if (servos[i]->pin != NONE) {
-//      servos[i]->servo.attach(servos[i]->pin);
-//      servos[i]->servo.writeMicroseconds(servos[i]->micros);
-//    }
-//  }
-
-  armServo.attach(13);
-  lidarServo.attach(11);
-  collectServo.attach(10);
+  armServo.attach(ARM_SERVO_PIN);
+  lidarServo.attach(LIDAR_SERVO_PIN);
+  collectServo.attach(COLLECT_SERVO_PIN);
 
   stepper.setSpeed(STEPPER_SPEED);
   lox.begin();
@@ -138,9 +121,42 @@ void setup() {
   enes.print(enes.destination.x);
   enes.print(",");
   enes.println(enes.destination.y);
+
+    //set up a timer interrupt every millisecond
+  OCR0A = 0x01; //millis() counter uses 0
+  TIMSK0 |= _BV(OCIE0A);
 }
 
-//uint64_t servoMask = 0;
+#define LIDAR_NONE 0
+#define LIDAR_LEFT 1
+#define LIDAR_RIGHT 2
+
+#define LIDAR_THRESHOLD 500
+
+uint8_t lidarDetection = LIDAR_NONE;
+
+//timer interrupt function (every millisecond)
+SIGNAL(TIMER0_COMPA_vect) {
+
+  VL53L0X_RangingMeasurementData_t measure;
+
+  lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
+
+  double value = 1000;
+  if (measure.RangeStatus != 4) {  // phase failures have incorrect data
+    value = measure.RangeMilliMeter;
+  }
+
+  
+  uint32_t timer = millis() % 1024;
+  if (timer > 512) {
+    lidarServo.write(62);
+    if (timer > 512 + 200 && value < LIDAR_THRESHOLD) lidarDetection = LIDAR_LEFT;
+  } else {
+    lidarServo.write(98);
+    if (timer > 200 && value < LIDAR_THRESHOLD) lidarDetection = LIDAR_RIGHT;
+  }
+}
 
 void updateDevices(uint32_t loopTimer) {
   //every 16 millis
@@ -150,13 +166,6 @@ void updateDevices(uint32_t loopTimer) {
       motors[i]->update();
     }
   }
-
-//  //shift the mask to the left by 1, wrapping around when it reaches the end
-//  servoMask = servoMask << 1;
-//  if (servoMask == 0) servoMask = 1;
-//  for (uint8_t i = 0; i < MAX_NUM_SERVOS; i++) {
-//    servos[i]->update(servoMask);
-//  }
 
   //make sure the loop runs no faster than once every 1 millisecond
   int16_t difference = millis() - loopTimer;
@@ -218,39 +227,6 @@ uint8_t state = DRIVE_OVER_ROCKS;
 
 uint32_t stateTimer = 0;
 uint8_t stateCounter = 0;
-
-#define LIDAR_NONE 0
-#define LIDAR_LEFT 1
-#define LIDAR_RIGHT 2
-
-#define LIDAR_THRESHOLD 300
-
-uint8_t lidarScan() {
-  VL53L0X_RangingMeasurementData_t measure;
-
-  lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
-
-  double value = 1000;
-  if (measure.RangeStatus != 4) {  // phase failures have incorrect data
-    value = measure.RangeMilliMeter;
-    //    if (measure.RangeMilliMeter < 300) {
-    //      double value = measure.RangeMilliMeter;
-    //      enes.print("Object! (mm): "); enes.println(value);
-    //    }
-  }
-
-  uint32_t timer = millis() % 1024;
-  if (timer > 512) {
-    lidarServo.write(62);
-//    servos[3]->set(200);
-    if (timer > 512 + 200 && value < LIDAR_THRESHOLD) return LIDAR_LEFT;
-  } else {
-    lidarServo.write(98);
-//    servos[3]->set(1200);
-    if (timer > 200 && value < LIDAR_THRESHOLD) return LIDAR_RIGHT;
-  }
-  return LIDAR_NONE;
-}
 
 uint8_t phIndex = 0;
 boolean getPH () {
@@ -364,7 +340,6 @@ void loop() {
 
   updateDevices(loopTimer);
 
-  uint8_t lidarDetection = lidarScan();
   //Serial.println(lidarDetection);
 
   //every 16 millis (on a different count than the motors) update OSV location
