@@ -87,12 +87,21 @@ void EnableFastAnalogRead() {
   cbi(ADCSRA, ADPS1);
   cbi(ADCSRA, ADPS0);
 }
+void myUpdateLocation() {
+    enes.updateLocation();
+    double x2 =   enes.location.x * cos(enes.location.theta) + enes.location.y * sin(enes.location.theta);
+    double y2 = - enes.location.x * sin(enes.location.theta) + enes.location.y * cos(enes.location.theta);
+    x2 += 40;
+    y2 += 10;
+    enes.location.x =   x2 * cos(-enes.location.theta) + y2 * sin(-enes.location.theta);
+    enes.location.y = - x2 * cos(-enes.location.theta) + y2 * cos(-enes.location.theta);
+}
 
 void setup() {
 
   EnableFastAnalogRead(); //enable fast analog reading
 
-  Serial.begin(9600);
+ // Serial.begin(9600);
 
 //  for (uint8_t i = 0; i < MAX_NUM_SERVOS; i++) {
 //    if (servos[i]->pin != NONE) {
@@ -108,7 +117,7 @@ void setup() {
   stepper.setSpeed(STEPPER_SPEED);
   lox.begin();
 
-  while (!enes.updateLocation())
+  while (!myUpdateLocation())
   {
     enes.println("Unable to retrieve location");
   }
@@ -232,11 +241,11 @@ uint8_t lidarScan() {
 
   uint32_t timer = millis() % 1024;
   if (timer > 512) {
-    lidarServo.write(45);
+    lidarServo.write(62);
 //    servos[3]->set(200);
     if (timer > 512 + 200 && value < LIDAR_THRESHOLD) return LIDAR_LEFT;
   } else {
-    lidarServo.write(135);
+    lidarServo.write(98);
 //    servos[3]->set(1200);
     if (timer > 200 && value < LIDAR_THRESHOLD) return LIDAR_RIGHT;
   }
@@ -356,11 +365,11 @@ void loop() {
   updateDevices(loopTimer);
 
   uint8_t lidarDetection = lidarScan();
-  Serial.println(lidarDetection);
+  //Serial.println(lidarDetection);
 
   //every 16 millis (on a different count than the motors) update OSV location
 //  if (loopTimer % 16 == 8)
-  enes.updateLocation();
+  myUpdateLocation();
   enes.print("state: ");
   enes.println(state);
 
