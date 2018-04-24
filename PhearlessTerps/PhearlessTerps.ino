@@ -16,8 +16,8 @@
 
 #define TRIG_PIN_1 A4
 #define ECHO_PIN_1 A5
-#define TRIG_PIN_2 A2
-#define ECHO_PIN_2 A1
+#define TRIG_PIN_2 11
+#define ECHO_PIN_2 10
 
 #define STEPS 200
 #define STEPPER_SPEED 60
@@ -84,12 +84,12 @@ void EnableFastAnalogRead() {
 
 boolean myUpdateLocation() {
     if (!enes.updateLocation()) return false;
-    double x2 =   enes.location.x * cos(enes.location.theta) + enes.location.y * sin(enes.location.theta);
-    double y2 = - enes.location.x * sin(enes.location.theta) + enes.location.y * cos(enes.location.theta);
-    x2 += 40;
-    y2 += 10;
-    enes.location.x =   x2 * cos(-enes.location.theta) + y2 * sin(-enes.location.theta);
-    enes.location.y = - x2 * sin(-enes.location.theta) + y2 * cos(-enes.location.theta);
+//    double x2 =   enes.location.x * cos(enes.location.theta) + enes.location.y * sin(enes.location.theta);
+//    double y2 = - enes.location.x * sin(enes.location.theta) + enes.location.y * cos(enes.location.theta);
+//    x2 += 40;
+//    y2 += 10;
+//    enes.location.x =   x2 * cos(-enes.location.theta) + y2 * sin(-enes.location.theta);
+//    enes.location.y = - x2 * sin(-enes.location.theta) + y2 * cos(-enes.location.theta);
     return true;
 }
 
@@ -104,6 +104,8 @@ void setup() {
   armServo.attach(ARM_SERVO_PIN);
 //  lidarServo.attach(LIDAR_SERVO_PIN);
   collectServo.attach(COLLECT_SERVO_PIN);
+
+  armServo.write(165);
 
   stepper.setSpeed(STEPPER_SPEED);
 //  lox.begin();
@@ -190,18 +192,20 @@ void updateDevices(uint32_t loopTimer) {
 
 uint32_t loopTimer = 0;
 
-#define ROCKS_X_POS 1.5
-#define GOAL_X_POS 3
+#define ROCKS_X_POS 1
+#define GOAL_X_POS 2
 #define DRIVE_TO_AVOID_DIST .25
 
-#define DRIVE_OVER_ROCKS 0
-#define TURN_DOWNSTREAM 1
-#define DRIVE_DOWNSTREAM 2
-#define TURN_LEFT 3
-#define TURN_RIGHT 4
-#define DRIVE_TO_AVOID 5
-#define TURN_TO_GOAL 6
-#define DRIVE_TO_GOAL 7
+#define START 0
+#define DRIVE_OVER_ROCKS 1
+#define TURN_DOWNSTREAM 2
+#define DRIVE_DOWNSTREAM 3
+#define TURN_LEFT 4
+#define TURN_RIGHT 5
+#define BACK_UP 6
+#define DRIVE_TO_AVOID 7
+#define TURN_TO_GOAL 8
+#define DRIVE_TO_GOAL 9
 
 #define ARMDOWN 100
 #define MEASUREPH 101
@@ -212,7 +216,7 @@ uint32_t loopTimer = 0;
 
 #define STOP 255
 
-uint8_t state = DRIVE_OVER_ROCKS;
+uint8_t state = START;
 
 uint32_t stateTimer = 0;
 uint8_t stateCounter = 0;
@@ -326,7 +330,9 @@ boolean turn(double targetHeading) {
 #define OBJECT_NONE 0
 #define OBJECT_LEFT 1
 #define OBJECT_RIGHT 2
-#define OBJECT_THRESHOLD_CM 30
+#define OBJECT_CLOSE 3
+#define OBJECT_THRESHOLD_CM 50
+#define OBJECT_THRESHOLD_CM_CLOSE 15
 
 int detectObject() {
   digitalWrite(TRIG_PIN_1, LOW);
@@ -354,6 +360,9 @@ int detectObject() {
   enes.print("  ");
   enes.println(dist2);
 //  enes.print("  ");
+  if (dist1 < OBJECT_THRESHOLD_CM || dist2 < OBJECT_THRESHOLD_CM_CLOSE) {
+    return OBJECT_CLOSE;
+  }
   if (dist1 < OBJECT_THRESHOLD_CM || dist2 < OBJECT_THRESHOLD_CM) {
     if (dist1 < dist2) {
       return OBJECT_LEFT;
@@ -383,8 +392,17 @@ void loop() {
   enes.print("object: ");
   enes.println(objectDetection);
   
+  if(state==START)
+  {
+    if(turn(0))
+    {
+       motors[0]->setPower(0);
+       motors[1]->setPower(0);
+       state=DRIVE_OVER_ROCKS; 
+    }
+  } else
   if (state == DRIVE_OVER_ROCKS) {
-    motors[0]->setPower(200);
+    motors[0]->setPower(180);
     motors[1]->setPower(200);
     if (enes.location.x >= ROCKS_X_POS) {
       state = TURN_DOWNSTREAM;
@@ -394,16 +412,61 @@ void loop() {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
       state = DRIVE_DOWNSTREAM;
-    }
-  } else if (state == DRIVE_DOWNSTREAM) {
-
-    motors[0]->setPower(200);
-    motors[1]->setPower(200);
-    double thetaError = dabs(enes.location.theta);
+    } else 
+    if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
+      state = TURN_RIGHT;
+    } else
+    if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
+      state = TURN_LEFT;
+    } else
     if (objectDetection == OBJECT_LEFT) {
       state = TURN_RIGHT;
     } else if (objectDetection == OBJECT_RIGHT) {
       state = TURN_LEFT;
+    } else if (objectDetection == OBJECT_CLOSE) {
+      startX = enes.location.x;
+      startY = enes.location.y;
+      state = BACK_UP;
+    }
+  } else if (state == DRIVE_DOWNSTREAM) {
+
+    motors[0]->setPower(180);
+    motors[1]->setPower(200);
+    double thetaError = dabs(enes.location.theta);
+   
+//    if (objectDetection == OBJECT_LEFT ) {
+//      if(enes.location.y>=.3)
+//      {
+//        state = TURN_RIGHT;
+//      }
+//      else
+//      {
+//        state=TURN_LEFT;
+//      }
+//     
+//    } else if (objectDetection == OBJECT_RIGHT) {
+//      if (enes.location.y <= 1.7){
+//        state = TURN_LEFT;
+//      }
+//      else {
+//        state = TURN_RIGHT;
+//      }
+    
+    
+    if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
+      state = TURN_RIGHT;
+    } else
+    if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
+      state = TURN_LEFT;
+    } else
+    if (objectDetection == OBJECT_LEFT) {
+      state = TURN_RIGHT;
+    } else if (objectDetection == OBJECT_RIGHT) {
+      state = TURN_LEFT;
+    } else if (objectDetection == OBJECT_CLOSE) {
+      startX = enes.location.x;
+      startY = enes.location.y;
+      state = BACK_UP;
     } else if (thetaError >= PI / 16) {
       state = TURN_DOWNSTREAM;
     } else if (enes.location.x >= GOAL_X_POS) {
@@ -427,43 +490,72 @@ void loop() {
       startY = enes.location.y;
       state = DRIVE_TO_AVOID;
     }
+  } else if (state == BACK_UP) {
+    motors[0]->setPower(-180);
+    motors[1]->setPower(-200);
+    double dX = startX - enes.location.x;
+    double dY = startY - enes.location.y;
+    double dist = sqrt(dX * dX + dY * dY);
+    if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
+      state = TURN_RIGHT;
+    } else
+    if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
+      state = TURN_LEFT;
+    } else
+    if (objectDetection == OBJECT_LEFT) {
+      state = TURN_RIGHT;
+    } else if (objectDetection == OBJECT_RIGHT) {
+      state = TURN_LEFT;
+    } else if (dist > DRIVE_TO_AVOID_DIST/2) {
+      state = TURN_DOWNSTREAM;
+    }
   } else if (state == DRIVE_TO_AVOID) {
-    motors[0]->setPower(200);
+    motors[0]->setPower(180);
     motors[1]->setPower(200);
     double dX = startX - enes.location.x;
     double dY = startY - enes.location.y;
     double dist = sqrt(dX * dX + dY * dY);
 
+    if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
+      state = TURN_RIGHT;
+    } else
+    if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
+      state = TURN_LEFT;
+    } else
     if (objectDetection == OBJECT_LEFT) {
       state = TURN_RIGHT;
     } else if (objectDetection == OBJECT_RIGHT) {
       state = TURN_LEFT;
+    } else if (objectDetection == OBJECT_CLOSE) {
+      startX = enes.location.x;
+      startY = enes.location.y;
+      state = BACK_UP;
     } else if (dist > DRIVE_TO_AVOID_DIST) {
       state = TURN_DOWNSTREAM;
     }
   } else if (state == TURN_TO_GOAL) {
     double x = enes.destination.x - enes.location.x;
     double y = enes.destination.y - enes.location.y;
-    double desiredTheta = atan(y / x);
+    double desiredTheta = atan2(y, x);
     if (turn(desiredTheta))
     {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
-      state = STOP;
+      state = DRIVE_TO_GOAL;
     }
   } else if (state == DRIVE_TO_GOAL) {
 
-    motors[0]->setPower(200);
+    motors[0]->setPower(180);
     motors[1]->setPower(200);
     double x = enes.destination.x - enes.location.x;
     double y = enes.destination.y - enes.location.y;
-    double desiredTheta = atan(y / x);
+    double desiredTheta = atan2(y, x);
     double thetaError = dabs(desiredTheta - enes.location.theta);
     double distance = sqrt(x * x + y * y);
     if (thetaError >= PI / 16)
     {
       state = TURN_TO_GOAL;
-    } else if (distance <= .250) {
+    } else if (distance <= .55) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
       stateTimer = millis();
@@ -471,7 +563,7 @@ void loop() {
       navigatedTime = millis();
       enes.navigated();
 //      servos[2]->set(720); //should lower green arm 90 degrees
-      armServo.write(90);
+      armServo.write(65);
     }
   } else if (state == ARMDOWN) {
     if (millis() > stateTimer + 1000) {
@@ -508,14 +600,14 @@ void loop() {
   }
   else if (state == MIX_FORWARD){
     if (millis() > stateTimer + 250) {
-       motors[0]->setPower(-200);
+       motors[0]->setPower(-180);
        motors[1]->setPower(-200);
        state = MIX_BACKWARD;
     }
   }
   else if (state == MIX_BACKWARD){
     if (millis() > stateTimer + 250) {
-       motors[0]->setPower(200);
+       motors[0]->setPower(180);
        motors[1]->setPower(200);
        stateCounter++;
        if (stateCounter >= 4){
