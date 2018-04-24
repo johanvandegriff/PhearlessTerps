@@ -14,6 +14,12 @@
 #define TIME_LIMIT  1000L * 60 * 5 //5 minutes
 #define TIME_BUFFER 5000 //5 seconds
 
+//const int trigPin1 = w;
+//const int echoPin1 = x;
+//const int trigPin2 = y;
+//const int echoPin2 = z;
+//long duration1, cm1, duration2, cm2;
+
 #define STEPS 200
 #define STEPPER_SPEED 60
 
@@ -91,7 +97,7 @@ void setup() {
 
   EnableFastAnalogRead(); //enable fast analog reading
 
- // Serial.begin(9600);
+ //Serial.begin(9600);
 
   armServo.attach(ARM_SERVO_PIN);
   lidarServo.attach(LIDAR_SERVO_PIN);
@@ -100,6 +106,11 @@ void setup() {
   stepper.setSpeed(STEPPER_SPEED);
   lox.begin();
 
+  //pinMode(trigPin1, OUTPUT);
+  //pinMode(echoPin1, INPUT);
+  //pinMode(trigPin2, OUTPUT);
+  //pinMode(echoPin2, INPUT);
+  
   while (!myUpdateLocation())
   {
     enes.println("Unable to retrieve location");
@@ -123,10 +134,10 @@ void setup() {
   enes.println(enes.destination.y);
 
     //set up a timer interrupt every millisecond
-  OCR0A = 0x01; //millis() counter uses 0
-  TIMSK0 |= _BV(OCIE0A);
+ //OCR0A = 0x01; //millis() counter uses 0
+  //TIMSK0 |= _BV(OCIE0A);
 }
-
+/*
 #define LIDAR_NONE 0
 #define LIDAR_LEFT 1
 #define LIDAR_RIGHT 2
@@ -146,8 +157,6 @@ SIGNAL(TIMER0_COMPA_vect) {
   if (measure.RangeStatus != 4) {  // phase failures have incorrect data
     value = measure.RangeMilliMeter;
   }
-
-  
   uint32_t timer = millis() % 1024;
   if (timer > 512) {
     lidarServo.write(62);
@@ -157,7 +166,7 @@ SIGNAL(TIMER0_COMPA_vect) {
     if (timer > 200 && value < LIDAR_THRESHOLD) lidarDetection = LIDAR_RIGHT;
   }
 }
-
+*/
 void updateDevices(uint32_t loopTimer) {
   //every 16 millis
   if (loopTimer % 16 == 0) {
@@ -348,6 +357,28 @@ void loop() {
   enes.print("state: ");
   enes.println(state);
 
+  //digitalWrite(trigPin1, LOW);
+  //digitalWrite(trigPin2, LOW);
+  //delayMicroseconds(5);
+  //digitalWrite(trigPin1, HIGH);
+  //digitalWrite(trigPin2, HIGH);
+  //delayMicroseconds(10);
+  //digitalWrite(trigPin1, LOW);
+  //digitalWrite(trigPin2, LOW);
+  
+  //pinMode(echoPin1, INPUT);
+  //duration1 = pulseIn(echoPin1, HIGH);
+  //pinMode(echoPin2, INPUT);
+  //duration2 = pulseIn(echoPin2, HIGH);
+
+   //cm1 = (duration1/2) / 29.1;
+   //cm2 = (duration1/2) / 29.1;
+
+   //if(cm1 < someVal)
+   //   turn leftl
+   //else if (cm2 < someVal)
+   //   turn right;
+  
   if (state == DRIVE_OVER_ROCKS) {
     motors[0]->setPower(200);
     motors[1]->setPower(200);
