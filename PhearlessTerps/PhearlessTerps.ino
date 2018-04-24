@@ -14,11 +14,10 @@
 #define TIME_LIMIT  1000L * 60 * 5 //5 minutes
 #define TIME_BUFFER 5000 //5 seconds
 
-//const int trigPin1 = w;
-//const int echoPin1 = x;
-//const int trigPin2 = y;
-//const int echoPin2 = z;
-//long duration1, cm1, duration2, cm2;
+#define TRIG_PIN_1 A4
+#define ECHO_PIN_1 A5
+#define TRIG_PIN_2 A2
+#define ECHO_PIN_2 A1
 
 #define STEPS 200
 #define STEPPER_SPEED 60
@@ -44,7 +43,9 @@ Stepper stepper(STEPS, 4,5,6,7);
     int rxPin
     int txPin
 */
-Enes100 enes("pHearless Terps", CHEMICAL, 5, 8, 9);
+#define VISION_TARGET_NUMBER 
+7
+Enes100 enes("pHearless Terps", CHEMICAL, VISION_TARGET_NUMBER, 8, 9);
 
 double dabs(double val) {
   if (val > 0) return val;
@@ -67,11 +68,11 @@ Motor* motors[MAX_NUM_MOTORS] = {
 };
 
 #define ARM_SERVO_PIN 13
-#define LIDAR_SERVO_PIN 11
+//#define LIDAR_SERVO_PIN 11
 #define COLLECT_SERVO_PIN 10
 
 Servo armServo;
-Servo lidarServo;
+//Servo lidarServo;
 Servo collectServo;
 
 //call this from the setup() function to speed up analogRead
@@ -97,19 +98,19 @@ void setup() {
 
   EnableFastAnalogRead(); //enable fast analog reading
 
- //Serial.begin(9600);
+ Serial.begin(9600);
 
   armServo.attach(ARM_SERVO_PIN);
-  lidarServo.attach(LIDAR_SERVO_PIN);
+//  lidarServo.attach(LIDAR_SERVO_PIN);
   collectServo.attach(COLLECT_SERVO_PIN);
 
   stepper.setSpeed(STEPPER_SPEED);
   lox.begin();
 
-  //pinMode(trigPin1, OUTPUT);
-  //pinMode(echoPin1, INPUT);
-  //pinMode(trigPin2, OUTPUT);
-  //pinMode(echoPin2, INPUT);
+  pinMode(TRIG_PIN_1, OUTPUT);
+  pinMode(ECHO_PIN_1, INPUT);
+  pinMode(TRIG_PIN_2, OUTPUT);
+  pinMode(ECHO_PIN_2, INPUT);
   
   while (!myUpdateLocation())
   {
@@ -343,6 +344,48 @@ boolean turn(double targetHeading) {
   return done;
 }
 
+#define OBJECT_NONE 0
+#define OBJECT_LEFT 1
+#define OBJECT_RIGHT 2
+#define OBJECT_THRESHOLD_CM 30
+
+int detectObject() {
+  digitalWrite(TRIG_PIN_1, LOW);
+  //digitalWrite(TRIG_PIN_2, LOW);
+  delayMicroseconds(5);
+  digitalWrite(TRIG_PIN_1, HIGH);
+  //digitalWrite(TRIG_PIN_2, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN_1, LOW);
+ // digitalWrite(TRIG_PIN_2, LOW);
+
+  pinMode(ECHO_PIN_1, INPUT);
+  double dist1 = pulseIn(ECHO_PIN_1, HIGH) / 58.2;
+  enes.print(dist1);
+
+
+  digitalWrite(TRIG_PIN_2, LOW);
+  delayMicroseconds(5);
+  digitalWrite(TRIG_PIN_2, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN_2, LOW);
+   
+  pinMode(ECHO_PIN_2, INPUT);
+  double dist2 = pulseIn(ECHO_PIN_2, HIGH) / 58.2;
+  enes.print("  ");
+  enes.println(dist2);
+//  enes.print("  ");
+  if (dist1 < OBJECT_THRESHOLD_CM || dist2 < OBJECT_THRESHOLD_CM) {
+    if (dist1 < dist2) {
+      return OBJECT_LEFT;
+    } else {
+      return OBJECT_RIGHT;
+    }
+  } else {
+    return OBJECT_NONE;
+  }
+}
+
 double startX, startY;
 
 void loop() {
@@ -357,27 +400,9 @@ void loop() {
   enes.print("state: ");
   enes.println(state);
 
-  //digitalWrite(trigPin1, LOW);
-  //digitalWrite(trigPin2, LOW);
-  //delayMicroseconds(5);
-  //digitalWrite(trigPin1, HIGH);
-  //digitalWrite(trigPin2, HIGH);
-  //delayMicroseconds(10);
-  //digitalWrite(trigPin1, LOW);
-  //digitalWrite(trigPin2, LOW);
-  
-  //pinMode(echoPin1, INPUT);
-  //duration1 = pulseIn(echoPin1, HIGH);
-  //pinMode(echoPin2, INPUT);
-  //duration2 = pulseIn(echoPin2, HIGH);
-
-   //cm1 = (duration1/2) / 29.1;
-   //cm2 = (duration1/2) / 29.1;
-
-   //if(cm1 < someVal)
-   //   turn leftl
-   //else if (cm2 < someVal)
-   //   turn right;
+  int objectDetection = detectObject();
+  enes.print("object: ");
+  enes.println(objectDetection);
   
   if (state == DRIVE_OVER_ROCKS) {
     motors[0]->setPower(200);
@@ -396,9 +421,9 @@ void loop() {
     motors[0]->setPower(200);
     motors[1]->setPower(200);
     double thetaError = dabs(enes.location.theta);
-    if (lidarDetection == LIDAR_LEFT) {
+    if (objectDetection == OBJECT_LEFT) {
       state = TURN_RIGHT;
-    } else if (lidarDetection == LIDAR_RIGHT) {
+    } else if (objectDetection == OBJECT_RIGHT) {
       state = TURN_LEFT;
     } else if (thetaError >= PI / 16) {
       state = TURN_DOWNSTREAM;
@@ -430,9 +455,9 @@ void loop() {
     double dY = startY - enes.location.y;
     double dist = sqrt(dX * dX + dY * dY);
 
-    if (lidarDetection == LIDAR_LEFT) {
+    if (objectDetection == OBJECT_LEFT) {
       state = TURN_RIGHT;
-    } else if (lidarDetection == LIDAR_RIGHT) {
+    } else if (objectDetection == OBJECT_RIGHT) {
       state = TURN_LEFT;
     } else if (dist > DRIVE_TO_AVOID_DIST) {
       state = TURN_DOWNSTREAM;
