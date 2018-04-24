@@ -29,9 +29,9 @@ float b;
 int buf[10], temp;
 float phValue = 0;
 uint32_t navigatedTime = 0;
-#include "Adafruit_VL53L0X.h"
+//#include "Adafruit_VL53L0X.h"
 
-Adafruit_VL53L0X lox = Adafruit_VL53L0X();
+//Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 
 Stepper stepper(STEPS, 4,5,6,7);
 
@@ -43,8 +43,7 @@ Stepper stepper(STEPS, 4,5,6,7);
     int rxPin
     int txPin
 */
-#define VISION_TARGET_NUMBER 
-7
+#define VISION_TARGET_NUMBER 7
 Enes100 enes("pHearless Terps", CHEMICAL, VISION_TARGET_NUMBER, 8, 9);
 
 double dabs(double val) {
@@ -98,14 +97,16 @@ void setup() {
 
   EnableFastAnalogRead(); //enable fast analog reading
 
- Serial.begin(9600);
+  enes.println("test");
+
+// Serial.begin(9600);
 
   armServo.attach(ARM_SERVO_PIN);
 //  lidarServo.attach(LIDAR_SERVO_PIN);
   collectServo.attach(COLLECT_SERVO_PIN);
 
   stepper.setSpeed(STEPPER_SPEED);
-  lox.begin();
+//  lox.begin();
 
   pinMode(TRIG_PIN_1, OUTPUT);
   pinMode(ECHO_PIN_1, INPUT);
@@ -185,28 +186,6 @@ void updateDevices(uint32_t loopTimer) {
     loopTimer += 1;
     while (millis() < loopTimer);
   }
-}
-
-/*
-   returns -1 when an invalid char is passed in
-*/
-int8_t charToHex(char c) {
-  if      (c >= '0' && c <= '9') return (c - '0');
-  else if (c >= 'a' && c <= 'f') return (c - 'a') + 10;
-  else if (c >= 'A' && c <= 'F') return (c - 'A') + 10;
-  else                           return -1;
-}
-
-const char hexChars[16] = {
-  '0', '1', '2', '3',
-  '4', '5', '6', '7',
-  '8', '9', 'A', 'B',
-  'C', 'D', 'E', 'F'
-};
-
-char hexToChar(uint8_t h) {
-  if (h >= 16) return -1;
-  return hexChars[h];
 }
 
 uint32_t loopTimer = 0;
