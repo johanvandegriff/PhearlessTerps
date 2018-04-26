@@ -105,7 +105,7 @@ void setup() {
 //  lidarServo.attach(LIDAR_SERVO_PIN);
   collectServo.attach(COLLECT_SERVO_PIN);
 
-  armServo.write(165);
+  armServo.write(163); //150
 
   stepper.setSpeed(STEPPER_SPEED);
 //  lox.begin();
@@ -208,15 +208,16 @@ uint32_t loopTimer = 0;
 #define DRIVE_TO_GOAL 9
 
 #define ARMDOWN 100
-#define MEASUREPH 101
-#define BASE_COLLECTION 102
-#define CHECK_PH 103
-#define MIX_FORWARD 104
-#define MIX_BACKWARD 105
+#define ARMDOWN2 101
+#define MEASUREPH 102
+#define BASE_COLLECTION 103
+#define CHECK_PH 104
+#define MIX_FORWARD 105
+#define MIX_BACKWARD 106
 
 #define STOP 255
 
-uint8_t state = START;
+uint8_t state = DRIVE_TO_GOAL;
 
 uint32_t stateTimer = 0;
 uint8_t stateCounter = 0;
@@ -244,7 +245,7 @@ boolean getPH () {
       for (int i = 2; i < 8; i++)               //take the average value of 6 center sample
         avgValue += buf[i];
       phValue = (float)avgValue * 5.0 / 1024 / 6; //convert the analog into millivolt
-      phValue = 3.6 * phValue + 2.4;                //convert the millivolt into pH value
+      phValue = 3.5 * phValue;                //convert the millivolt into pH value
       return true;
     }
   }
@@ -516,6 +517,12 @@ void loop() {
     double dY = startY - enes.location.y;
     double dist = sqrt(dX * dX + dY * dY);
 
+    if (enes.location.y <= .1) {
+      state = TURN_RIGHT;
+    } else
+    if (enes.location.y >= 1.9) {
+      state = TURN_LEFT;
+    } else
     if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
       state = TURN_RIGHT;
     } else
@@ -545,7 +552,7 @@ void loop() {
     }
   } else if (state == DRIVE_TO_GOAL) {
 
-    motors[0]->setPower(180);
+    motors[0]->setPower(200);
     motors[1]->setPower(200);
     double x = enes.destination.x - enes.location.x;
     double y = enes.destination.y - enes.location.y;
@@ -563,9 +570,18 @@ void loop() {
       navigatedTime = millis();
       enes.navigated();
 //      servos[2]->set(720); //should lower green arm 90 degrees
-      armServo.write(65);
+      armServo.write(90);
     }
+  
   } else if (state == ARMDOWN) {
+    if (millis() > stateTimer + 1000) {
+      armServo.write(0);
+      //delay(1000);
+      state = ARMDOWN2;
+      stateTimer = millis();
+      phIndex = 0;
+    }
+  } else if (state == ARMDOWN2) {
     if (millis() > stateTimer + 1000) {
       //delay(1000);
       state = MEASUREPH;
@@ -574,11 +590,13 @@ void loop() {
     }
   } else if (state == MEASUREPH) {
     if (getPH()) {
-      enes.baseObjective(phValue); //transmit the inital pH of the pool
+      enes.baseObjective(phValue);
+      state = STOP;//transmit the inital pH of the pool
 //      servos[1]->set(720); //should raise the retaining servo arm 90 degrees to allow syring to move
-      collectServo.write(90);
+      //  myservo.write(90); 90 is the down position
+      collectServo.write(0);
       stateTimer = millis();
-      state = BASE_COLLECTION;
+      state = STOP;
     }
   } else if (state == BASE_COLLECTION) {
     if (millis() > stateTimer + 1000) {
