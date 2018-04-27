@@ -1,0 +1,22 @@
+//https://www.codechef.com/ide/
+#include <iostream>
+#include <math.h>
+using namespace std;
+
+int main() {
+
+    double x1 = 100;
+    double y1 = 100;
+    double theta = 0.01;
+	double x2 =   x1 * cos(theta) + y1 * sin(theta);
+    double y2 = - x1 * sin(theta) + y1 * cos(theta);
+    x2 += 40;
+    y2 += 10;
+    x1 =   x2 * cos(-theta) + y2 * sin(-theta);
+    y1 = - x2 * sin(-theta) + y2 * cos(-theta);
+
+    
+    cout << "(" << x1 << ", " << y1 << ")\n" << endl;
+
+	return 0;
+}
