@@ -346,8 +346,8 @@ int detectObject() {
  // digitalWrite(TRIG_PIN_2, LOW);
 
   pinMode(ECHO_PIN_1, INPUT);
-  double dist1 = pulseIn(ECHO_PIN_1, HIGH) / 58.2;
-  enes.print(dist1);
+  double distLeft = pulseIn(ECHO_PIN_1, HIGH) / 58.2;   // left
+  enes.print(distLeft);
 
 
   digitalWrite(TRIG_PIN_2, LOW);
@@ -357,15 +357,15 @@ int detectObject() {
   digitalWrite(TRIG_PIN_2, LOW);
    
   pinMode(ECHO_PIN_2, INPUT);
-  double dist2 = pulseIn(ECHO_PIN_2, HIGH) / 58.2;
+  double distRight = pulseIn(ECHO_PIN_2, HIGH) / 58.2;
   enes.print("  ");
   enes.println(dist2);
 //  enes.print("  ");
-  if (dist1 < OBJECT_THRESHOLD_CM || dist2 < OBJECT_THRESHOLD_CM_CLOSE) {
+  if (distLeft < OBJECT_THRESHOLD_CM || distRight < OBJECT_THRESHOLD_CM_CLOSE) {
     return OBJECT_CLOSE;
   }
-  if (dist1 < OBJECT_THRESHOLD_CM || dist2 < OBJECT_THRESHOLD_CM) {
-    if (dist1 < dist2) {
+  if (distLeft < OBJECT_THRESHOLD_CM || distRight < OBJECT_THRESHOLD_CM) {
+    if (distLeft < distRight) {
       return OBJECT_LEFT;
     } else {
       return OBJECT_RIGHT;
@@ -414,17 +414,25 @@ void loop() {
       motors[1]->setPower(0);
       state = DRIVE_DOWNSTREAM;
     } else 
-    if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
-      state = TURN_RIGHT;
-    } else
-    if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
+    if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) { //changed from turn right
       state = TURN_LEFT;
+    } else
+    if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) { //changed from turn left
+      state = TURN_RIGHT;
     } else
     if (objectDetection == OBJECT_LEFT) {
       state = TURN_RIGHT;
     } else if (objectDetection == OBJECT_RIGHT) {
       state = TURN_LEFT;
-    } else if (objectDetection == OBJECT_CLOSE) {
+    } else if (enes.location.y <= .3) //added this
+    {
+      state = TURN_LEFT;
+    }
+    else if(enes.location.y >=1.7) /added this
+    {
+      state=TURN_RIGHT;
+    }
+    else if (objectDetection == OBJECT_CLOSE) {
       startX = enes.location.x;
       startY = enes.location.y;
       state = BACK_UP;
@@ -434,48 +442,37 @@ void loop() {
     motors[0]->setPower(180);
     motors[1]->setPower(200);
     double thetaError = dabs(enes.location.theta);
-   
-//    if (objectDetection == OBJECT_LEFT ) {
-//      if(enes.location.y>=.3)
-//      {
-//        state = TURN_RIGHT;
-//      }
-//      else
-//      {
-//        state=TURN_LEFT;
-//      }
-//     
-//    } else if (objectDetection == OBJECT_RIGHT) {
-//      if (enes.location.y <= 1.7){
-//        state = TURN_LEFT;
-//      }
-//      else {
-//        state = TURN_RIGHT;
-//      }
-    
-    
-    if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
-      state = TURN_RIGHT;
-    } else
-    if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
+
+    if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) { //changed from turn right
       state = TURN_LEFT;
-    } else
-    if (objectDetection == OBJECT_LEFT) {
+    } else if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) { //changed from turn left
+      state = TURN_RIGHT;
+    } else if (objectDetection == OBJECT_LEFT) {
       state = TURN_RIGHT;
     } else if (objectDetection == OBJECT_RIGHT) {
       state = TURN_LEFT;
-    } else if (objectDetection == OBJECT_CLOSE) {
+    } else if (enes.location.y <= .3) //added this
+    {
+      state = TURN_LEFT;
+    }
+    else if(enes.location.y >=1.7) /added this
+    {
+      state=TURN_RIGHT;
+    }
+    else if (objectDetection == OBJECT_CLOSE) {
       startX = enes.location.x;
       startY = enes.location.y;
       state = BACK_UP;
-    } else if (thetaError >= PI / 16) {
+    }  
+ else if (thetaError >= PI / 16) {
       state = TURN_DOWNSTREAM;
-    } else if (enes.location.x >= GOAL_X_POS) {
+    } 
+    else if (enes.location.x >= GOAL_X_POS) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
       state = TURN_TO_GOAL;
     }
-  } else if (state == TURN_LEFT) {
+  } else if (state == TURN_RIGHT) { //corrected used to be left
     if (turn(-PI / 4.0)) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
@@ -483,7 +480,7 @@ void loop() {
       startY = enes.location.y;
       state = DRIVE_TO_AVOID;
     }
-  } else if (state == TURN_RIGHT) {
+  } else if (state == TURN_LEFT) {//corrected used to be Right
     if (turn(PI / 4.0)) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
@@ -498,16 +495,24 @@ void loop() {
     double dY = startY - enes.location.y;
     double dist = sqrt(dX * dX + dY * dY);
     if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
-      state = TURN_RIGHT;
+      state = TURN_LEFT;
     } else
     if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
-      state = TURN_LEFT;
+      state = TURN_RIGHT;
     } else
     if (objectDetection == OBJECT_LEFT) {
       state = TURN_RIGHT;
     } else if (objectDetection == OBJECT_RIGHT) {
       state = TURN_LEFT;
-    } else if (dist > DRIVE_TO_AVOID_DIST/2) {
+    }
+      else if (enes.location.y <= .3) //added this
+    {
+      state = TURN_LEFT;
+    }
+    else if(enes.location.y >=1.7) /added this
+    {
+      state=TURN_RIGHT;
+    }else if (dist > DRIVE_TO_AVOID_DIST/2) {
       state = TURN_DOWNSTREAM;
     }
   } else if (state == DRIVE_TO_AVOID) {
@@ -517,17 +522,17 @@ void loop() {
     double dY = startY - enes.location.y;
     double dist = sqrt(dX * dX + dY * dY);
 
-    if (enes.location.y <= .1) {
-      state = TURN_RIGHT;
-    } else
-    if (enes.location.y >= 1.9) {
+    if (enes.location.y <= .3) { //changed this
       state = TURN_LEFT;
+    } else
+    if (enes.location.y >= 1.7) {//changed this
+      state = TURN_RIGHT;
     } else
     if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
-      state = TURN_RIGHT;
+      state = TURN_LEFT;
     } else
     if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
-      state = TURN_LEFT;
+      state = TURN_RIGHT;
     } else
     if (objectDetection == OBJECT_LEFT) {
       state = TURN_RIGHT;
@@ -646,3 +651,7 @@ void loop() {
      state = STOP;
   }
 }
+
+
+//Changed dist1 to distLeft & Changed dist2 to distRight
+//Changed -pi/4 to represent turn_Right & Changed pi/4 to represent turning Left
