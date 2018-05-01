@@ -33,7 +33,7 @@ uint32_t navigatedTime = 0;
 
 //Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 
-Stepper stepper(STEPS, 4,5,6,7);
+Stepper stepper(STEPS, A1, A2, A3, 6);
 
 /* Create a new Enes100 object
    Parameters:
@@ -68,7 +68,7 @@ Motor* motors[MAX_NUM_MOTORS] = {
 
 #define ARM_SERVO_PIN 13
 //#define LIDAR_SERVO_PIN 11
-#define COLLECT_SERVO_PIN 10
+#define COLLECT_SERVO_PIN 0
 
 Servo armServo;
 //Servo lidarServo;
