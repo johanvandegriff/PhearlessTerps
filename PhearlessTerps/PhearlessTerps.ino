@@ -217,7 +217,7 @@ uint32_t loopTimer = 0;
 
 #define STOP 255
 
-uint8_t state = DRIVE_TO_GOAL;
+uint8_t state = START;
 
 uint32_t stateTimer = 0;
 uint8_t stateCounter = 0;
@@ -359,7 +359,7 @@ int detectObject() {
   pinMode(ECHO_PIN_2, INPUT);
   double distRight = pulseIn(ECHO_PIN_2, HIGH) / 58.2;
   enes.print("  ");
-  enes.println(dist2);
+ // enes.println(dist2);
 //  enes.print("  ");
   if (distLeft < OBJECT_THRESHOLD_CM || distRight < OBJECT_THRESHOLD_CM_CLOSE) {
     return OBJECT_CLOSE;
@@ -428,7 +428,7 @@ void loop() {
     {
       state = TURN_LEFT;
     }
-    else if(enes.location.y >=1.7) /added this
+    else if(enes.location.y >=1.7) //added this
     {
       state=TURN_RIGHT;
     }
@@ -455,7 +455,7 @@ void loop() {
     {
       state = TURN_LEFT;
     }
-    else if(enes.location.y >=1.7) /added this
+    else if(enes.location.y >=1.7) //added this
     {
       state=TURN_RIGHT;
     }
@@ -509,7 +509,7 @@ void loop() {
     {
       state = TURN_LEFT;
     }
-    else if(enes.location.y >=1.7) /added this
+    else if(enes.location.y >=1.7) //added this
     {
       state=TURN_RIGHT;
     }else if (dist > DRIVE_TO_AVOID_DIST/2) {
