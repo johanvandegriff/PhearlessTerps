@@ -14,10 +14,10 @@
 #define TIME_LIMIT  1000L * 60 * 5 //5 minutes
 #define TIME_BUFFER 5000 //5 seconds
 
-#define TRIG_PIN_2 A4
-#define ECHO_PIN_2 A5
-#define TRIG_PIN_1 11
-#define ECHO_PIN_1 10
+#define TRIG_PIN_1 A4
+#define ECHO_PIN_1 A5
+#define TRIG_PIN_2 11
+#define ECHO_PIN_2 10
 
 #define STEPS 200
 #define STEPPER_SPEED 60
@@ -488,8 +488,8 @@ void loop() {
       state = DRIVE_TO_AVOID;
     }
   } else if (state == BACK_UP) {
-    motors[0]->setPower(-110);
-    motors[1]->setPower(-110);
+    motors[0]->setPower(-200);
+    motors[1]->setPower(-200);
     double dX = startX - enes.location.x;
     double dY = startY - enes.location.y;
     double dist = sqrt(dX * dX + dY * dY);
