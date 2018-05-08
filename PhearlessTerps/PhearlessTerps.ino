@@ -13,12 +13,8 @@
 
 #define TIME_LIMIT  1000L * 60 * 5 //5 minutes
 #define TIME_BUFFER 5000 //5 seconds
-
-#define TRIG_PIN_1 A4
-#define ECHO_PIN_1 A5
-#define TRIG_PIN_2 11
-#define ECHO_PIN_2 10
-
+#define X_DIFF 40
+#define Y_DIFF 10
 #define STEPS 200
 #define STEPPER_SPEED 60
 
@@ -29,11 +25,11 @@ float b;
 int buf[10], temp;
 float phValue = 0;
 uint32_t navigatedTime = 0;
-//#include "Adafruit_VL53L0X.h"
+#include "Adafruit_VL53L0X.h"
 
-//Adafruit_VL53L0X lox = Adafruit_VL53L0X();
+Adafruit_VL53L0X lox = Adafruit_VL53L0X();
 
-Stepper stepper(STEPS, A1, A2, A3, 6);
+Stepper stepper(STEPS, 4,5,6,7);
 
 /* Create a new Enes100 object
    Parameters:
@@ -43,8 +39,7 @@ Stepper stepper(STEPS, A1, A2, A3, 6);
     int rxPin
     int txPin
 */
-#define VISION_TARGET_NUMBER 7
-Enes100 enes("pHearless Terps", CHEMICAL, VISION_TARGET_NUMBER, 8, 9);
+Enes100 enes("pHearless Terps", CHEMICAL, 37, 8, 9);
 
 double dabs(double val) {
   if (val > 0) return val;
@@ -59,19 +54,31 @@ static inline double sgn(double val) {
 }
 
 #define MAX_NUM_MOTORS 2
+//#define MAX_NUM_SERVOS 4
 
 Motor* motors[MAX_NUM_MOTORS] = {
   // PORT           IN1|PWM|EN| FB | SF |BRAKE
+//  /*0*/ new Motor(  5,  7, 12, NONE, NONE, true), //left motor
+//  /*1*/ new Motor(  2,  3, 4, NONE, NONE, true) //right motor
   /*0*/ new Motor(  3,  2, 4, NONE, NONE, true), //right motor
   /*1*/ new Motor(  7,  5, 12, NONE, NONE, true) //left motor
 };
 
-#define ARM_SERVO_PIN 13
-//#define LIDAR_SERVO_PIN 11
-#define COLLECT_SERVO_PIN 0
+///*
+//   holds all the servos
+//   if a servo is unused, set the pin to NONE
+//   the serco library only allows MIN as low as 544 and MAX as high as 2400
+//*/
+//ServoControl* servos[MAX_NUM_SERVOS] = {
+//  // PORT                 PIN| MIN| MAX|POS (0-1440)
+//  /*0*/ new ServoControl( 6                   ), //neutralization syringe servo
+//  /*1*/ new ServoControl(10                   ), //collection syringe servo
+//  /*2*/ new ServoControl(13                   ), //arm servo
+//  /*3*/ new ServoControl(11                   ) //lidar servo
+//};
 
 Servo armServo;
-//Servo lidarServo;
+Servo lidarServo;
 Servo collectServo;
 
 //call this from the setup() function to speed up analogRead
@@ -81,15 +88,17 @@ void EnableFastAnalogRead() {
   cbi(ADCSRA, ADPS1);
   cbi(ADCSRA, ADPS0);
 }
-
 boolean myUpdateLocation() {
-    if (!enes.updateLocation()) return false;
-//    double x2 =   enes.location.x * cos(enes.location.theta) + enes.location.y * sin(enes.location.theta);
-//    double y2 = - enes.location.x * sin(enes.location.theta) + enes.location.y * cos(enes.location.theta);
-//    x2 += 40;
-//    y2 += 10;
-//    enes.location.x =   x2 * cos(-enes.location.theta) + y2 * sin(-enes.location.theta);
-//    enes.location.y = - x2 * sin(-enes.location.theta) + y2 * cos(-enes.location.theta);
+    boolean b = enes.updateLocation();
+    if(!b){
+      return false;
+    }
+    double x2 =   enes.location.x * cos(enes.location.theta) + enes.location.y * sin(enes.location.theta);
+    double y2 = - enes.location.x * sin(enes.location.theta) + enes.location.y * cos(enes.location.theta);
+    x2 += 40;
+    y2 += 10;
+    enes.location.x =   x2 * cos(-enes.location.theta) + y2 * sin(-enes.location.theta);
+    enes.location.y = - x2 * cos(-enes.location.theta) + y2 * cos(-enes.location.theta);
     return true;
 }
 
@@ -97,23 +106,24 @@ void setup() {
 
   EnableFastAnalogRead(); //enable fast analog reading
 
-  enes.println("test");
+  //Serial.begin(9600);
 
-// Serial.begin(9600);
+//  for (uint8_t i = 0; i < MAX_NUM_SERVOS; i++) {
+//    if (servos[i]->pin != NONE) {
+//      servos[i]->servo.attach(servos[i]->pin);
+//      servos[i]->servo.writeMicroseconds(servos[i]->micros);
+//    }
+//  }
 
-  armServo.attach(ARM_SERVO_PIN);
-//  lidarServo.attach(LIDAR_SERVO_PIN);
-  collectServo.attach(COLLECT_SERVO_PIN);
+  armServo.attach(13);
+  lidarServo.attach(11);
+  collectServo.attach(10);
 
-  armServo.write(163); //150
+  armServo.write(160);
+
   stepper.setSpeed(STEPPER_SPEED);
-//  lox.begin();
+  lox.begin();
 
-  pinMode(TRIG_PIN_1, OUTPUT);
-  pinMode(ECHO_PIN_1, INPUT);
-  pinMode(TRIG_PIN_2, OUTPUT);
-  pinMode(ECHO_PIN_2, INPUT);
-  
   while (!myUpdateLocation())
   {
     enes.println("Unable to retrieve location");
@@ -135,41 +145,10 @@ void setup() {
   enes.print(enes.destination.x);
   enes.print(",");
   enes.println(enes.destination.y);
-
-    //set up a timer interrupt every millisecond
- //OCR0A = 0x01; //millis() counter uses 0
-  //TIMSK0 |= _BV(OCIE0A);
 }
-/*
-#define LIDAR_NONE 0
-#define LIDAR_LEFT 1
-#define LIDAR_RIGHT 2
 
-#define LIDAR_THRESHOLD 500
+//uint64_t servoMask = 0;
 
-uint8_t lidarDetection = LIDAR_NONE;
-
-//timer interrupt function (every millisecond)
-SIGNAL(TIMER0_COMPA_vect) {
-
-  VL53L0X_RangingMeasurementData_t measure;
-
-  lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
-
-  double value = 1000;
-  if (measure.RangeStatus != 4) {  // phase failures have incorrect data
-    value = measure.RangeMilliMeter;
-  }
-  uint32_t timer = millis() % 1024;
-  if (timer > 512) {
-    lidarServo.write(62);
-    if (timer > 512 + 200 && value < LIDAR_THRESHOLD) lidarDetection = LIDAR_LEFT;
-  } else {
-    lidarServo.write(98);
-    if (timer > 200 && value < LIDAR_THRESHOLD) lidarDetection = LIDAR_RIGHT;
-  }
-}
-*/
 void updateDevices(uint32_t loopTimer) {
   //every 16 millis
   if (loopTimer % 16 == 0) {
@@ -178,6 +157,13 @@ void updateDevices(uint32_t loopTimer) {
       motors[i]->update();
     }
   }
+
+//  //shift the mask to the left by 1, wrapping around when it reaches the end
+//  servoMask = servoMask << 1;
+//  if (servoMask == 0) servoMask = 1;
+//  for (uint8_t i = 0; i < MAX_NUM_SERVOS; i++) {
+//    servos[i]->update(servoMask);
+//  }
 
   //make sure the loop runs no faster than once every 1 millisecond
   int16_t difference = millis() - loopTimer;
@@ -189,37 +175,89 @@ void updateDevices(uint32_t loopTimer) {
   }
 }
 
+/*
+   returns -1 when an invalid char is passed in
+*/
+int8_t charToHex(char c) {
+  if      (c >= '0' && c <= '9') return (c - '0');
+  else if (c >= 'a' && c <= 'f') return (c - 'a') + 10;
+  else if (c >= 'A' && c <= 'F') return (c - 'A') + 10;
+  else                           return -1;
+}
+
+const char hexChars[16] = {
+  '0', '1', '2', '3',
+  '4', '5', '6', '7',
+  '8', '9', 'A', 'B',
+  'C', 'D', 'E', 'F'
+};
+
+char hexToChar(uint8_t h) {
+  if (h >= 16) return -1;
+  return hexChars[h];
+}
+
 uint32_t loopTimer = 0;
 
-#define ROCKS_X_POS 1
-#define GOAL_X_POS 2
+#define ROCKS_X_POS 1.5
+#define GOAL_X_POS 3
 #define DRIVE_TO_AVOID_DIST .25
 
-#define START 0
-#define DRIVE_OVER_ROCKS 1
-#define TURN_DOWNSTREAM 2
-#define DRIVE_DOWNSTREAM 3
-#define TURN_LEFT 4
-#define TURN_RIGHT 5
-#define BACK_UP 6
-#define DRIVE_TO_AVOID 7
-#define TURN_TO_GOAL 8
-#define DRIVE_TO_GOAL 9
+#define DRIVE_OVER_ROCKS 0
+#define TURN_DOWNSTREAM 1
+#define DRIVE_DOWNSTREAM 2
+#define TURN_LEFT 3
+#define TURN_RIGHT 4
+#define DRIVE_TO_AVOID 5
+#define TURN_TO_GOAL 6
+#define DRIVE_TO_GOAL 7
 
 #define ARMDOWN 100
-#define ARMDOWN2 101
-#define MEASUREPH 102
-#define BASE_COLLECTION 103
-#define CHECK_PH 104
-#define MIX_FORWARD 105
-#define MIX_BACKWARD 106
+#define MEASUREPH 101
+#define BASE_COLLECTION 102
+#define CHECK_PH 103
+#define MIX_FORWARD 104
+#define MIX_BACKWARD 105
 
 #define STOP 255
 
-uint8_t state = START;
+uint8_t state = TURN_TO_GOAL;//DRIVE_OVER_ROCKS;
 
 uint32_t stateTimer = 0;
 uint8_t stateCounter = 0;
+
+#define LIDAR_NONE 0
+#define LIDAR_LEFT 1
+#define LIDAR_RIGHT 2
+
+#define LIDAR_THRESHOLD 300
+
+  VL53L0X_RangingMeasurementData_t measure;
+
+  lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
+
+  double value = 1000;
+  if (measure.RangeStatus != 4) {  // phase failures have incorrect data
+    value = measure.RangeMilliMeter;
+    //    if (measure.RangeMilliMeter < 300) {
+    //      double value = measure.RangeMilliMeter;
+    //      enes.print("Object! (mm): "); enes.println(value);
+    //    }
+  }
+
+  uint32_t timer = millis() % 1024;
+  
+  if (timer > 512) {
+    lidarServo.write(62);
+//    servos[3]->set(200);
+    if (timer > 512 + 200 && value < LIDAR_THRESHOLD) return LIDAR_LEFT;
+  } else {
+    lidarServo.write(98);
+//    servos[3]->set(1200);
+    if (timer > 200 && value < LIDAR_THRESHOLD) return LIDAR_RIGHT;
+  }
+  return LIDAR_NONE;
+}
 
 uint8_t phIndex = 0;
 boolean getPH () {
@@ -244,7 +282,7 @@ boolean getPH () {
       for (int i = 2; i < 8; i++)               //take the average value of 6 center sample
         avgValue += buf[i];
       phValue = (float)avgValue * 5.0 / 1024 / 6; //convert the analog into millivolt
-      phValue = 3.5 * phValue;                //convert the millivolt into pH value
+      phValue = 3.6 * phValue + 2.4;                //convert the millivolt into pH value
       return true;
     }
   }
@@ -327,59 +365,11 @@ boolean turn(double targetHeading) {
   return done;
 }
 
-#define OBJECT_NONE 0
-#define OBJECT_LEFT 1
-#define OBJECT_RIGHT 2
-#define OBJECT_CLOSE 3
-#define OBJECT_THRESHOLD_CM 40
-#define OBJECT_THRESHOLD_CM_CLOSE 13
-
-int detectObject() {
-  digitalWrite(TRIG_PIN_1, LOW);
-  //digitalWrite(TRIG_PIN_2, LOW);
-  delayMicroseconds(5);
-  digitalWrite(TRIG_PIN_1, HIGH);
-  //digitalWrite(TRIG_PIN_2, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN_1, LOW);
- // digitalWrite(TRIG_PIN_2, LOW);
-
-  pinMode(ECHO_PIN_1, INPUT);
-  double distLeft = pulseIn(ECHO_PIN_1, HIGH) / 58.2;   // left
-  enes.print(distLeft);
-
-
-  digitalWrite(TRIG_PIN_2, LOW);
-  delayMicroseconds(5);
-  digitalWrite(TRIG_PIN_2, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN_2, LOW);
-   
-  pinMode(ECHO_PIN_2, INPUT);
-  double distRight = pulseIn(ECHO_PIN_2, HIGH) / 58.2;
-  enes.print("  ");
- // enes.println(dist2);
-//  enes.print("  ");
-  if (distLeft < OBJECT_THRESHOLD_CM_CLOSE || distRight < OBJECT_THRESHOLD_CM_CLOSE) {
-    return OBJECT_CLOSE;
-  }
-  if (distLeft < OBJECT_THRESHOLD_CM || distRight < OBJECT_THRESHOLD_CM) {
-    if (distLeft < distRight) {
-      return OBJECT_LEFT;
-    } else {
-      return OBJECT_RIGHT;
-    }
-  } else {
-    return OBJECT_NONE;
-  }
-}
-
 double startX, startY;
 
 void loop() {
 
   updateDevices(loopTimer);
-
   //Serial.println(lidarDetection);
 
   //every 16 millis (on a different count than the motors) update OSV location
@@ -388,19 +378,6 @@ void loop() {
   enes.print("state: ");
   enes.println(state);
 
-  int objectDetection = detectObject();
-  enes.print("object: ");
-  enes.println(objectDetection);
-  
-  if(state==START)
-  {
-    if(turn(0))
-    {
-       motors[0]->setPower(0);
-       motors[1]->setPower(0);
-       state=DRIVE_OVER_ROCKS; 
-    }
-  } else
   if (state == DRIVE_OVER_ROCKS) {
     motors[0]->setPower(200);
     motors[1]->setPower(200);
@@ -412,66 +389,26 @@ void loop() {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
       state = DRIVE_DOWNSTREAM;
-    } else 
-    if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) { //changed from turn right
-      state = TURN_LEFT;
-    } else
-    if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) { //changed from turn left
-      state = TURN_RIGHT;
-    } else
-    if (objectDetection == OBJECT_LEFT) {
-      state = TURN_RIGHT;
-    } else if (objectDetection == OBJECT_RIGHT) {
-      state = TURN_LEFT;
-    } else if (enes.location.y <= .3) //added this
-    {
-      state = TURN_LEFT;
-    }
-    else if(enes.location.y >=1.7) //added this
-    {
-      state=TURN_RIGHT;
-    }
-    else if (objectDetection == OBJECT_CLOSE) {
-      startX = enes.location.x;
-      startY = enes.location.y;
-      state = BACK_UP;
     }
   } else if (state == DRIVE_DOWNSTREAM) {
 
     motors[0]->setPower(200);
     motors[1]->setPower(200);
     double thetaError = dabs(enes.location.theta);
-
-    if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) { //changed from turn right
-      state = TURN_LEFT;
-    } else if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) { //changed from turn left
+    
+    if (lidarDetection == LIDAR_LEFT) {
       state = TURN_RIGHT;
-    } else if (objectDetection == OBJECT_LEFT) {
-      state = TURN_RIGHT;
-    } else if (objectDetection == OBJECT_RIGHT) {
+    } else if (lidarDetection == LIDAR_RIGHT) {
       state = TURN_LEFT;
-    } else if (enes.location.y <= .3) //added this
-    {
-      state = TURN_LEFT;
-    }
-    else if(enes.location.y >=1.7) //added this
-    {
-      state=TURN_RIGHT;
-    }
-    else if (objectDetection == OBJECT_CLOSE) {
-      startX = enes.location.x;
-      startY = enes.location.y;
-      state = BACK_UP;
-    }  
- else if (thetaError >= PI / 16) {
+   
+    } else if (thetaError >= PI / 16) {
       state = TURN_DOWNSTREAM;
-    } 
-    else if (enes.location.x >= GOAL_X_POS) {
+    } else if (enes.location.x >= GOAL_X_POS) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
       state = TURN_TO_GOAL;
     }
-  } else if (state == TURN_RIGHT) { //corrected used to be left
+  } else if (state == TURN_LEFT) {
     if (turn(-PI / 4.0)) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
@@ -479,40 +416,13 @@ void loop() {
       startY = enes.location.y;
       state = DRIVE_TO_AVOID;
     }
-  } else if (state == TURN_LEFT) {//corrected used to be Right
+  } else if (state == TURN_RIGHT) {
     if (turn(PI / 4.0)) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
       startX = enes.location.x;
       startY = enes.location.y;
       state = DRIVE_TO_AVOID;
-    }
-  } else if (state == BACK_UP) {
-    motors[0]->setPower(-110);
-    motors[1]->setPower(-110);
-    double dX = startX - enes.location.x;
-    double dY = startY - enes.location.y;
-    double dist = sqrt(dX * dX + dY * dY);
-    if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
-      state = TURN_LEFT;
-    } else
-    if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
-      state = TURN_RIGHT;
-    } else
-    if (objectDetection == OBJECT_LEFT) {
-      state = TURN_RIGHT;
-    } else if (objectDetection == OBJECT_RIGHT) {
-      state = TURN_LEFT;
-    }
-      else if (enes.location.y <= .3) //added this
-    {
-      state = TURN_LEFT;
-    }
-    else if(enes.location.y >=1.7) //added this
-    {
-      state=TURN_RIGHT;
-    }else if (dist > DRIVE_TO_AVOID_DIST/2) {
-      state = TURN_DOWNSTREAM;
     }
   } else if (state == DRIVE_TO_AVOID) {
     motors[0]->setPower(200);
@@ -521,33 +431,17 @@ void loop() {
     double dY = startY - enes.location.y;
     double dist = sqrt(dX * dX + dY * dY);
 
-    if (enes.location.y <= .3) { //changed this
-      state = TURN_LEFT;
-    } else
-    if (enes.location.y >= 1.7) {//changed this
+    if (lidarDetection == LIDAR_LEFT) {
       state = TURN_RIGHT;
-    } else
-    if (enes.location.y <= .3 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
+    } else if (lidarDetection == LIDAR_RIGHT) {
       state = TURN_LEFT;
-    } else
-    if (enes.location.y >= 1.7 && (objectDetection == OBJECT_LEFT || objectDetection == OBJECT_RIGHT)) {
-      state = TURN_RIGHT;
-    } else
-    if (objectDetection == OBJECT_LEFT) {
-      state = TURN_RIGHT;
-    } else if (objectDetection == OBJECT_RIGHT) {
-      state = TURN_LEFT;
-    } else if (objectDetection == OBJECT_CLOSE) {
-      startX = enes.location.x;
-      startY = enes.location.y;
-      state = BACK_UP;
     } else if (dist > DRIVE_TO_AVOID_DIST) {
       state = TURN_DOWNSTREAM;
     }
   } else if (state == TURN_TO_GOAL) {
     double x = enes.destination.x - enes.location.x;
     double y = enes.destination.y - enes.location.y;
-    double desiredTheta = atan2(y, x);
+    double desiredTheta = atan(y / x);
     if (turn(desiredTheta))
     {
       motors[0]->setPower(0);
@@ -560,13 +454,13 @@ void loop() {
     motors[1]->setPower(200);
     double x = enes.destination.x - enes.location.x;
     double y = enes.destination.y - enes.location.y;
-    double desiredTheta = atan2(y, x);
+    double desiredTheta = atan(y / x);
     double thetaError = dabs(desiredTheta - enes.location.theta);
     double distance = sqrt(x * x + y * y);
     if (thetaError >= PI / 16)
     {
       state = TURN_TO_GOAL;
-    } else if (distance <= .55) {
+    } else if (distance <= .250) {
       motors[0]->setPower(0);
       motors[1]->setPower(0);
       stateTimer = millis();
@@ -576,16 +470,7 @@ void loop() {
 //      servos[2]->set(720); //should lower green arm 90 degrees
       armServo.write(90);
     }
-  
   } else if (state == ARMDOWN) {
-    if (millis() > stateTimer + 1000) {
-      armServo.write(0);
-      //delay(1000);
-      state = ARMDOWN2;
-      stateTimer = millis();
-      phIndex = 0;
-    }
-  } else if (state == ARMDOWN2) {
     if (millis() > stateTimer + 1000) {
       //delay(1000);
       state = MEASUREPH;
@@ -594,13 +479,11 @@ void loop() {
     }
   } else if (state == MEASUREPH) {
     if (getPH()) {
-      enes.baseObjective(phValue);
-      state = STOP;//transmit the inital pH of the pool
+      enes.baseObjective(phValue); //transmit the inital pH of the pool
 //      servos[1]->set(720); //should raise the retaining servo arm 90 degrees to allow syring to move
-      //  myservo.write(90); 90 is the down position
-      collectServo.write(0);
+      collectServo.write(90);
       stateTimer = millis();
-      state = STOP;
+      state = BASE_COLLECTION;
     }
   } else if (state == BASE_COLLECTION) {
     if (millis() > stateTimer + 1000) {
@@ -650,7 +533,3 @@ void loop() {
      state = STOP;
   }
 }
-
-
-//Changed dist1 to distLeft & Changed dist2 to distRight
-//Changed -pi/4 to represent turn_Right & Changed pi/4 to represent turning Left
