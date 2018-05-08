@@ -331,8 +331,8 @@ boolean turn(double targetHeading) {
 #define OBJECT_LEFT 1
 #define OBJECT_RIGHT 2
 #define OBJECT_CLOSE 3
-#define OBJECT_THRESHOLD_CM 50
-#define OBJECT_THRESHOLD_CM_CLOSE 10
+#define OBJECT_THRESHOLD_CM 40
+#define OBJECT_THRESHOLD_CM_CLOSE 13
 
 int detectObject() {
   digitalWrite(TRIG_PIN_1, LOW);
