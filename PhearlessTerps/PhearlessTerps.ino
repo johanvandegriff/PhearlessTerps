@@ -106,7 +106,6 @@ void setup() {
   collectServo.attach(COLLECT_SERVO_PIN);
 
   armServo.write(163); //150
-
   stepper.setSpeed(STEPPER_SPEED);
 //  lox.begin();
 
@@ -333,7 +332,7 @@ boolean turn(double targetHeading) {
 #define OBJECT_RIGHT 2
 #define OBJECT_CLOSE 3
 #define OBJECT_THRESHOLD_CM 50
-#define OBJECT_THRESHOLD_CM_CLOSE 15
+#define OBJECT_THRESHOLD_CM_CLOSE 10
 
 int detectObject() {
   digitalWrite(TRIG_PIN_1, LOW);
@@ -361,7 +360,7 @@ int detectObject() {
   enes.print("  ");
  // enes.println(dist2);
 //  enes.print("  ");
-  if (distLeft < OBJECT_THRESHOLD_CM || distRight < OBJECT_THRESHOLD_CM_CLOSE) {
+  if (distLeft < OBJECT_THRESHOLD_CM_CLOSE || distRight < OBJECT_THRESHOLD_CM_CLOSE) {
     return OBJECT_CLOSE;
   }
   if (distLeft < OBJECT_THRESHOLD_CM || distRight < OBJECT_THRESHOLD_CM) {
@@ -403,7 +402,7 @@ void loop() {
     }
   } else
   if (state == DRIVE_OVER_ROCKS) {
-    motors[0]->setPower(180);
+    motors[0]->setPower(200);
     motors[1]->setPower(200);
     if (enes.location.x >= ROCKS_X_POS) {
       state = TURN_DOWNSTREAM;
@@ -439,7 +438,7 @@ void loop() {
     }
   } else if (state == DRIVE_DOWNSTREAM) {
 
-    motors[0]->setPower(180);
+    motors[0]->setPower(200);
     motors[1]->setPower(200);
     double thetaError = dabs(enes.location.theta);
 
@@ -489,8 +488,8 @@ void loop() {
       state = DRIVE_TO_AVOID;
     }
   } else if (state == BACK_UP) {
-    motors[0]->setPower(-180);
-    motors[1]->setPower(-200);
+    motors[0]->setPower(-110);
+    motors[1]->setPower(-110);
     double dX = startX - enes.location.x;
     double dY = startY - enes.location.y;
     double dist = sqrt(dX * dX + dY * dY);
@@ -516,7 +515,7 @@ void loop() {
       state = TURN_DOWNSTREAM;
     }
   } else if (state == DRIVE_TO_AVOID) {
-    motors[0]->setPower(180);
+    motors[0]->setPower(200);
     motors[1]->setPower(200);
     double dX = startX - enes.location.x;
     double dY = startY - enes.location.y;
@@ -623,14 +622,14 @@ void loop() {
   }
   else if (state == MIX_FORWARD){
     if (millis() > stateTimer + 250) {
-       motors[0]->setPower(-180);
+       motors[0]->setPower(-200);
        motors[1]->setPower(-200);
        state = MIX_BACKWARD;
     }
   }
   else if (state == MIX_BACKWARD){
     if (millis() > stateTimer + 250) {
-       motors[0]->setPower(180);
+       motors[0]->setPower(200);
        motors[1]->setPower(200);
        stateCounter++;
        if (stateCounter >= 4){
